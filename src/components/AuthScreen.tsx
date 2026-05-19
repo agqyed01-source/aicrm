@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { apiFetch, setToken } from '../lib/api';
 
 export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
@@ -8,6 +9,7 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
   const [password, setPassword] = useState('');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,13 +87,22 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-            <input
-              required
-              type="password"
-              className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                required
+                type={showPassword ? "text" : "password"}
+                className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none pr-10"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
           <button
             type="submit"

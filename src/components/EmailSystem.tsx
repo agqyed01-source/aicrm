@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Mail, Plus, Trash2, Send, Wand2, RefreshCw, 
   Inbox, Settings, Send as SendIcon, Pencil, X, 
-  Search, ArrowLeft, MoreVertical, CheckSquare, Square, Star, Archive
+  Search, ArrowLeft, MoreVertical, CheckSquare, Square, Star, Archive, Eye, EyeOff
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
@@ -29,6 +29,7 @@ export default function EmailSystem({ user }: { user: any }) {
   const [credPort, setCredPort] = useState(465);
   const [credUser, setCredUser] = useState('');
   const [credPass, setCredPass] = useState('');
+  const [showCredPass, setShowCredPass] = useState(false);
   const [credApi, setCredApi] = useState('');
   
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
@@ -420,13 +421,22 @@ export default function EmailSystem({ user }: { user: any }) {
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1">密码/授权码 (Password)</label>
-                            <input 
-                              type="password" 
-                              className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              placeholder="********"
-                              value={credPass}
-                              onChange={e => setCredPass(e.target.value)}
-                            />
+                            <div className="relative">
+                              <input 
+                                type={showCredPass ? "text" : "password"} 
+                                className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-10"
+                                placeholder="********"
+                                value={credPass}
+                                onChange={e => setCredPass(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                onClick={() => setShowCredPass(!showCredPass)}
+                              >
+                                {showCredPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}

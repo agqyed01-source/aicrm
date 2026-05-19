@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, AlertCircle, Plus, Trash2 } from 'lucide-react';
+import { X, Save, AlertCircle, Plus, Trash2, Eye, EyeOff } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
 interface AIProfile {
@@ -17,6 +17,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     apiFetch('/api/db/settings')
@@ -150,13 +151,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1">API Key</label>
-                            <input 
-                              type="password" 
-                              className="w-full text-sm bg-white border border-slate-300 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              placeholder="sk-..."
-                              value={profile.apiKey}
-                              onChange={e => updateProfile(profile.id, 'apiKey', e.target.value)}
-                            />
+                            <div className="relative">
+                              <input 
+                                type={showPasswords[profile.id] ? "text" : "password"} 
+                                className="w-full text-sm bg-white border border-slate-300 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-8"
+                                placeholder="sk-..."
+                                value={profile.apiKey}
+                                onChange={e => updateProfile(profile.id, 'apiKey', e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                onClick={() => setShowPasswords(prev => ({ ...prev, [profile.id]: !prev[profile.id] }))}
+                              >
+                                {showPasswords[profile.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                            </div>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1">Default Model</label>
