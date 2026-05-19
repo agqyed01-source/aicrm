@@ -71,8 +71,8 @@ jobs:
             # Start or restart the PM2 process with PORT=3003
             pm2 describe my-ai-crm > /dev/null
             if [ $? -eq 0 ]; then
-                NODE_ENV=production PORT=3003 pm2 restart my-ai-crm --update-env
+                DATABASE_URL="$DATABASE_URL_SECRET" NODE_ENV=production PORT=3003 pm2 restart my-ai-crm --update-env
             else
-                NODE_ENV=production PORT=3003 pm2 start dist/server.cjs --name my-ai-crm
+                DATABASE_URL="$DATABASE_URL_SECRET" NODE_ENV=production PORT=3003 pm2 start dist/server.cjs --name my-ai-crm
             fi
             pm2 save
