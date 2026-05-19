@@ -10,7 +10,7 @@ import OpenAI from "openai";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const CLAWBACK_DAYS = 14;
 const JWT_SECRET = process.env.JWT_SECRET || "fallback_super_secret_for_dev_12345";
 
@@ -778,8 +778,8 @@ async function startServer() {
             const subject = parsed.subject || '';
             const text = parsed.text || parsed.html || '';
             const threadId = parsed.messageId || String(id);
-            const fromAdd = parsed.from?.value[0]?.address || '';
-            const toAdd = parsed.to?.value[0]?.address || '';
+            const fromAdd = (parsed.from?.value as any)?.[0]?.address || '';
+            const toAdd = (parsed.to?.value as any)?.[0]?.address || '';
             
             const existing = await pool!.query("SELECT id FROM emails WHERE account_id = $1 AND thread_id = $2", [account.id, threadId]);
             if (existing.rows.length === 0) {
