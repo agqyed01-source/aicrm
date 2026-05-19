@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import imaps from "imap-simple";
 import { simpleParser } from "mailparser";
