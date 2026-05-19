@@ -1,0 +1,6 @@
+{
+  "name": "PostgreSQL CRM System",
+  "description": "A CRM utilizing PostgreSQL with public/private customer pools, claiming mechanism, clawback rules, and Outscraper integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

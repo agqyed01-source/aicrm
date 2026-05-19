@@ -1,0 +1,675 @@
+import React, { useState, useEffect } from 'react';
+import { Clock, Phone, AlertTriangle, ArrowUpRight, MessageSquare, Plus, Search, Map, List, Trash2, Wand2, X } from 'lucide-react';
+import { formatDistanceToNow, differenceInDays } from 'date-fns';
+import { apiFetch } from '../lib/api';
+import MapChart from './MapChart';
+import CountrySelect from './CountrySelect';
+import { isMatchingSearch } from '../lib/utils';
+
+export default function PrivatePool({ user }: { user: any }) {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [tooltipContent, setTooltipContent] = useState('');
+  const [searchTags, setSearchTags] = useState<string[]>([]);
+  const [searchInput, setSearchInput] = useState('');
+
+  const loadMyCustomers = () => {
+    if (!user) return;
+    setLoading(true);
+    apiFetch(`/api/db/customers?filter=private&userId=${user.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.error) setCustomers(data);
+        setLoading(false);
+      })
+      .catch(console.error);
+  };
+
+  useEffect(() => {
+    loadMyCustomers();
+  }, [user]);
+
+  const releaseCustomer = async (id: number) => {
+    try {
+      if (!confirm("确定要将此客户释放回公海池吗？")) return;
+      const r = await apiFetch(`/api/db/customers/${id}/release`, { method: 'POST' });
+      if (r.ok) {
+        setCustomers(customers.filter(c => c.id !== id));
+        if (selectedId === id) setSelectedId(null);
+      } else {
+        const errorData = await r.json();
+        alert(errorData.error || "释放失败");
+      }
+    } catch(e) {
+      console.error(e);
+      alert("释放失败，请重试");
+    }
+  };
+
+  const getRiskStatus = (lastContact: string | null) => {
+    if (!lastContact) return { color: 'bg-red-50 text-red-700 border-red-200', text: '从未跟进', icon: AlertTriangle, risk: 'high' };
+    const days = differenceInDays(new Date(), new Date(lastContact));
+    if (days >= 10) return { color: 'bg-red-50 text-red-700 border-red-200', text: `闲置 ${days} 天`, icon: AlertTriangle, risk: 'high' };
+    if (days >= 5) return { color: 'bg-orange-50 text-orange-700 border-orange-200', text: `已过 ${days} 天`, icon: Clock, risk: 'medium' };
+    return { color: 'bg-emerald-50 text-emerald-700 border-emerald-200', text: '活跃中', icon: Phone, risk: 'low' };
+  };
+
+  const filtered = customers.filter(c => {
+    const termMatches = (term: string) => 
+      isMatchingSearch(term, c.name) || 
+      (c.industry && isMatchingSearch(term, c.industry)) ||
+      (c.address && isMatchingSearch(term, c.address)) ||
+      (c.country && isMatchingSearch(term, c.country)) ||
+      (c.province && isMatchingSearch(term, c.province)) ||
+      (c.city && isMatchingSearch(term, c.city));
+
+    const tagsMatch = searchTags.every(tag => termMatches(tag));
+    const inputMatch = !searchInput || termMatches(searchInput);
+    return tagsMatch && inputMatch;
+  });
+
+  const handleCountryClick = (country: string) => {
+    if (!searchTags.includes(country)) {
+      setSearchTags([...searchTags, country]);
+    }
+    setViewMode('list');
+  };
+
+  return (
+    <>
+      {/* Header */}
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
+        <div className="flex items-center gap-4">
+          <h2 className="text-lg font-bold">我的私域池</h2>
+          <div className="flex gap-2">
+             <span className="bg-blue-50 text-blue-700 text-xs px-2.5 py-1 rounded-full border border-blue-100 font-medium">已认领: {filtered.length}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center bg-slate-100 rounded p-0.5 border border-slate-200">
+            <button 
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <List className="w-3.5 h-3.5" />
+              列表
+            </button>
+            <button 
+              onClick={() => setViewMode('map')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'map' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Map className="w-3.5 h-3.5" />
+              地图
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Filter Bar */}
+      <section className="bg-white border-b border-slate-200 px-6 py-3 flex gap-4 shrink-0 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] flex items-center bg-slate-50 border border-slate-200 rounded focus-within:ring-1 focus-within:ring-blue-500 overflow-hidden px-2 py-1 flex-wrap gap-1 min-h-[36px]">
+          <Search className="w-4 h-4 text-slate-400 ml-1 mr-1 shrink-0" />
+          {searchTags.map(tag => (
+            <span key={tag} className="flex items-center bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded">
+              {tag}
+              <button 
+                onClick={() => setSearchTags(searchTags.filter(t => t !== tag))} 
+                className="ml-1 hover:text-blue-900 focus:outline-none"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          <input 
+            type="text" 
+            placeholder={searchTags.length === 0 ? "支持多条件，按Tab生成标..." : ""} 
+            className="flex-1 bg-transparent border-none focus:outline-none text-sm min-w-[120px] py-0.5"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') {
+                e.preventDefault();
+                const text = searchInput.trim();
+                if (text && !searchTags.includes(text)) {
+                  setSearchTags([...searchTags, text]);
+                  setSearchInput('');
+                }
+              } else if (e.key === 'Backspace' && !searchInput && searchTags.length > 0) {
+                setSearchTags(searchTags.slice(0, -1));
+              }
+            }}
+          />
+        </div>
+      </section>
+
+      {/* Main Content */}
+      <div className="flex-1 overflow-hidden p-6 flex flex-col md:flex-row gap-6 relative">
+        {viewMode === 'map' ? (
+          <div className="w-full h-full bg-white rounded-lg border border-slate-200 shadow-sm relative overflow-hidden">
+            <MapChart setTooltipContent={setTooltipContent} onCountryClick={handleCountryClick} customers={customers} />
+            {tooltipContent && (
+              <div className="absolute top-4 left-4 bg-white/90 backdrop-blur border border-slate-200 px-3 py-1.5 rounded text-sm shadow-sm font-semibold text-slate-800">
+                {tooltipContent}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Left List */}
+            <div className="w-full md:w-80 bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col shrink-0 overflow-hidden h-full">
+               <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 font-semibold text-xs text-slate-500 uppercase tracking-wider shrink-0">
+                 待跟进列表
+               </div>
+               <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                 {filtered.map(c => {
+                const status = getRiskStatus(c.last_contacted_at);
+                const StatusIcon = status.icon;
+                return (
+                  <div 
+                    key={c.id} 
+                    onClick={() => setSelectedId(c.id)}
+                    className={`p-4 cursor-pointer transition-colors ${selectedId === c.id ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-medium text-sm text-slate-800">{c.name}</h4>
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${status.color}`}>
+                         {status.text}
+                       </span>
+                    </div>
+                    {selectedId === c.id && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); releaseCustomer(c.id); }}
+                        className="text-[11px] text-blue-600 font-semibold hover:underline mt-1"
+                      >
+                        释放回公域
+                      </button>
+                    )}
+                  </div>
+                )
+             })}
+             {!loading && filtered.length === 0 && (
+               <div className="p-6 text-center text-slate-500 text-sm">
+                 空空如也，试试换个地区？或者去公域池认领吧！
+               </div>
+             )}
+             {loading && (
+               <div className="p-6 text-center text-slate-400 text-sm animate-pulse">加载中...</div>
+             )}
+           </div>
+        </div>
+
+        {/* Right Details */}
+        <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col overflow-hidden h-full">
+           {selectedId ? (
+              <CustomerDetailView 
+                customerId={selectedId} 
+                user={user} 
+                onInteractionLogged={loadMyCustomers}
+              />
+           ) : (
+              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
+                 选择左侧客户查看详情与跟进
+              </div>
+           )}
+        </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CustomerDetailView({ customerId, user, onInteractionLogged }: { customerId: number, user: any, onInteractionLogged: () => void }) {
+  const [customer, setCustomer] = useState<any>(null);
+  const [interactions, setInteractions] = useState<any[]>([]);
+  const [tab, setTab] = useState<'details' | 'log' | 'info'>('details');
+  const [note, setNote] = useState('');
+  const [editForm, setEditForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  
+  // AI Generate Message
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiContactMethod, setAiContactMethod] = useState<any>(null);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiDraft, setAiDraft] = useState('');
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [isSavingAiMsg, setIsSavingAiMsg] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`/api/db/customers/${customerId}`).then(r => r.json()).then(data => {
+      setCustomer(data);
+      setEditForm({ ...data, contact_methods: data.contact_methods || [] });
+    });
+    apiFetch(`/api/db/customers/${customerId}/interactions`).then(r => r.json()).then(setInteractions);
+    setTab('details');
+    setNote('');
+  }, [customerId]);
+
+  const handleSaveInfo = async () => {
+    setSaving(true);
+    try {
+      const r = await apiFetch(`/api/db/customers/${customerId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editForm.name,
+          website: editForm.website,
+          phone: editForm.phone,
+          address: editForm.address,
+          country: editForm.country,
+          province: editForm.province,
+          city: editForm.city,
+          industry: editForm.industry,
+          contact_methods: editForm.contact_methods
+        })
+      });
+      if (r.ok) {
+        setCustomer({ ...customer, ...editForm });
+        onInteractionLogged(); // Refresh listing parent to show new name/info
+      }
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerateAiMsg = async () => {
+    if (!aiPrompt) return;
+    setIsGeneratingAi(true);
+    try {
+      const type = aiContactMethod.type;
+      const r = await apiFetch("/api/ai/generate-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: aiPrompt,
+          method_type: type,
+          customer_info: customer
+        })
+      });
+      const data = await r.json();
+      if (data.message) {
+        setAiDraft(data.message);
+      } else {
+        alert(data.error || "生成失败");
+      }
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
+  const handleSendAiMsg = async () => {
+    if (!aiDraft) return;
+    setIsSavingAiMsg(true);
+    try {
+      const notes = `(${aiContactMethod.type}) AI 生成跟进: ${aiDraft}`;
+      const r = await apiFetch(`/api/db/customers/${customerId}/interactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, type: aiContactMethod.type, notes })
+      });
+      if (r.ok) {
+        const i = await r.json();
+        setInteractions([i, ...interactions]);
+        onInteractionLogged();
+
+        // Generate Link and open
+        let sendLink = '';
+        const encoded = encodeURIComponent(aiDraft);
+        const val = aiContactMethod.value;
+        if (aiContactMethod.type === 'whatsapp') {
+          sendLink = `https://wa.me/${val.replace(/[^0-9]/g, '')}?text=${encoded}`;
+        } else if (aiContactMethod.type === 'email') {
+          sendLink = `mailto:${val}?body=${encoded}`;
+        } else if (aiContactMethod.type === 'telegram') {
+          sendLink = `https://t.me/${val.replace('@', '')}?text=${encoded}`;
+        } else if (aiContactMethod.type === 'messenger') {
+          sendLink = `https://m.me/${val}`; // messenger can't easily prefill text
+          alert("Messenger 不能直接填入文本，文本已复制到剪贴板，请手动粘贴。");
+          try { navigator.clipboard.writeText(aiDraft); } catch(e){}
+        } else {
+          try { navigator.clipboard.writeText(aiDraft); } catch(e){}
+          alert("消息已复制到剪贴板。");
+        }
+        
+        if (sendLink) {
+          window.open(sendLink, '_blank');
+        }
+
+        setShowAiModal(false);
+        setAiPrompt('');
+        setAiDraft('');
+        setAiContactMethod(null);
+      }
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setIsSavingAiMsg(false);
+    }
+  };
+
+  const handleLogInteraction = async () => {
+    if (!note) return;
+    try {
+      const r = await apiFetch(`/api/db/customers/${customerId}/interactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, type: 'Note', notes: note })
+      });
+      if (r.ok) {
+        const i = await r.json();
+        setInteractions([i, ...interactions]);
+        setNote('');
+        setTab('details');
+        onInteractionLogged(); // Refresh listing parent to update "days idle"
+      }
+    } catch(e) {
+      console.error(e);
+    }
+  };
+
+  if (!customer) return <div className="flex-1 p-6 text-slate-400 text-sm">加载中...</div>;
+
+  return (
+    <>
+      <div className="p-6 border-b border-slate-200 flex-shrink-0 bg-slate-50">
+        <h3 className="text-lg font-bold text-slate-900">{customer.name}</h3>
+        <div className="text-xs text-slate-500 mt-1 flex gap-4 tabular-nums">
+          {customer.phone && <span>{customer.phone}</span>}
+          {customer.website && <a href={customer.website} target="_blank" className="text-blue-600 hover:underline">{customer.website.replace(/^https?:\/\//, '')}</a>}
+        </div>
+      </div>
+      
+      <div className="flex border-b border-slate-200 px-4 flex-shrink-0 bg-white">
+        <button 
+          onClick={() => setTab('details')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${tab === 'details' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          跟进记录
+        </button>
+        <button 
+          onClick={() => setTab('log')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${tab === 'log' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          新增跟进
+        </button>
+        <button 
+          onClick={() => setTab('info')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${tab === 'info' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          客户信息
+        </button>
+      </div>
+
+      <div className="p-6 overflow-y-auto flex-1 bg-white">
+        {tab === 'info' && (
+          <div className="space-y-4 max-w-2xl">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">客户名称</label>
+              <input 
+                type="text" 
+                className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={editForm.name || ''}
+                onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">国家</label>
+                <CountrySelect 
+                  value={editForm.country || ''} 
+                  onChange={val => setEditForm({ ...editForm, country: val })} 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">省份 / 州</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.province || ''}
+                  onChange={e => setEditForm({ ...editForm, province: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">城市</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.city || ''}
+                  onChange={e => setEditForm({ ...editForm, city: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">详细地址</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.address || ''}
+                  onChange={e => setEditForm({ ...editForm, address: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">行业 / 类型</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.industry || ''}
+                  onChange={e => setEditForm({ ...editForm, industry: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">联系电话</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.phone || ''}
+                  onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">网站</label>
+                <input 
+                  type="text" 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.website || ''}
+                  onChange={e => setEditForm({ ...editForm, website: e.target.value })}
+                />
+              </div>
+            </div>
+            
+            <div className="border-t border-slate-200 pt-4 mt-2">
+               <div className="flex items-center justify-between mb-2">
+                 <label className="block text-sm font-semibold text-slate-700">其他联系方式</label>
+                 <button 
+                   onClick={() => setEditForm((prev: any) => ({ 
+                     ...prev, 
+                     contact_methods: [...(prev.contact_methods || []), { type: 'phone', value: '' }] 
+                   }))}
+                   className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+                 >
+                   <Plus className="w-3.5 h-3.5" />
+                   添加联系方式
+                 </button>
+               </div>
+               
+               <div className="space-y-3">
+                 {(editForm.contact_methods || []).map((contact: any, index: number) => (
+                   <div key={index} className="flex items-center gap-2">
+                     <select 
+                       className="text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500 w-32 shrink-0"
+                       value={contact.type}
+                       onChange={e => {
+                         const methods = [...editForm.contact_methods];
+                         methods[index].type = e.target.value;
+                         setEditForm({ ...editForm, contact_methods: methods });
+                       }}
+                     >
+                       <option value="phone">电话</option>
+                       <option value="email">Email</option>
+                       <option value="whatsapp">WhatsApp</option>
+                       <option value="messenger">Messenger</option>
+                       <option value="telegram">Telegram</option>
+                       <option value="other">其他</option>
+                     </select>
+                     <input 
+                       type="text" 
+                       placeholder="请输入账号或号码..."
+                       className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                       value={contact.value}
+                       onChange={e => {
+                         const methods = [...editForm.contact_methods];
+                         methods[index].value = e.target.value;
+                         setEditForm({ ...editForm, contact_methods: methods });
+                       }}
+                     />
+                     {contact.value && ['whatsapp', 'email', 'messenger', 'telegram'].includes(contact.type) && (
+                       <button
+                         onClick={() => {
+                           setAiContactMethod(contact);
+                           setShowAiModal(true);
+                         }}
+                         className="text-purple-500 hover:text-purple-700 shrink-0 p-1"
+                         title="AI 辅写并跟进"
+                       >
+                         <Wand2 className="w-4 h-4" />
+                       </button>
+                     )}
+                     <button
+                       onClick={() => {
+                         const methods = editForm.contact_methods.filter((_: any, i: number) => i !== index);
+                         setEditForm({ ...editForm, contact_methods: methods });
+                       }}
+                       className="text-slate-400 hover:text-red-500 shrink-0 p-1"
+                     >
+                       <Trash2 className="w-4 h-4" />
+                     </button>
+                   </div>
+                 ))}
+                 {(editForm.contact_methods || []).length === 0 && (
+                   <div className="text-sm text-slate-500 italic py-2">暂无其他联系方式，点击右上角添加。</div>
+                 )}
+               </div>
+            </div>
+
+            <div className="pt-4">
+              <button 
+                disabled={saving}
+                onClick={handleSaveInfo}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded shadow-sm transition-colors disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存更改'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'log' && (
+          <div className="space-y-4 max-w-2xl">
+            <label className="block text-sm font-semibold text-slate-700">跟进内容</label>
+            <textarea 
+              rows={4}
+              className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-3 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="请输入沟通详情..."
+              value={note}
+              onChange={e => setNote(e.target.value)}
+            />
+            <button 
+              onClick={handleLogInteraction}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded shadow-sm transition-colors"
+            >
+              保存记录并刷新时间
+            </button>
+          </div>
+        )}
+
+        {tab === 'details' && (
+          <div className="space-y-6">
+            <div className="border-l-2 border-slate-200 ml-2 space-y-6">
+              {interactions.length === 0 ? (
+                <div className="pl-6 text-sm text-slate-500 italic">暂无联系记录。</div>
+              ) : interactions.map(i => (
+                <div key={i.id} className="relative pl-6">
+                  <div className="absolute top-1.5 -left-[5px] w-2 h-2 rounded-full bg-blue-400 border-2 border-white"></div>
+                  <div className="text-xs text-slate-400 mb-1 font-medium">
+                    {new Date(i.created_at).toLocaleString()} • {i.user_name || 'User'}
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded p-3 text-sm text-slate-700">
+                    {i.notes}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showAiModal && aiContactMethod && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-800">
+                <Wand2 className="w-5 h-5 text-purple-600" />
+                <h3 className="font-bold">撰写 {aiContactMethod.type} 消息</h3>
+              </div>
+              <button onClick={() => setShowAiModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">跟进提示词</label>
+                <textarea 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-3 focus:outline-none focus:ring-1 focus:ring-purple-500 min-h-[80px]"
+                  placeholder="你想说什么？例如：问候客户，询问产品是否有更新需求..."
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                />
+                <button 
+                  onClick={handleGenerateAiMsg}
+                  disabled={isGeneratingAi || !aiPrompt}
+                  className="mt-2 w-full bg-purple-100 hover:bg-purple-200 text-purple-800 text-sm font-semibold px-4 py-2 rounded transition-colors disabled:opacity-50"
+                >
+                  {isGeneratingAi ? '正在生成...' : '生成消息'}
+                </button>
+              </div>
+
+              {aiDraft && (
+                <div className="pt-2 border-t border-slate-100">
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">消息草稿 (可编辑)</label>
+                  <textarea 
+                    className="w-full text-sm bg-white border border-slate-200 rounded p-3 min-h-[100px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={aiDraft}
+                    onChange={e => setAiDraft(e.target.value)}
+                  />
+                  <div className="mt-4 flex gap-3">
+                    <button 
+                      onClick={() => setShowAiModal(false)}
+                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={handleSendAiMsg}
+                      disabled={isSavingAiMsg}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded shadow-sm transition-colors disabled:opacity-50"
+                    >
+                      {isSavingAiMsg ? '保存中...' : '保存记录并打开'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
