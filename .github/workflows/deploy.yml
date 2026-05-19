@@ -21,7 +21,7 @@ jobs:
           cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build Project
         run: npm run build
@@ -49,7 +49,7 @@ jobs:
             cd ~/my-ai-crm
             
             # Install production dependencies
-            npm ci --omit=dev
+            npm ci --omit=dev --legacy-peer-deps
             
             # Set up PM2 globally if not installed
             if ! command -v pm2 &> /dev/null
