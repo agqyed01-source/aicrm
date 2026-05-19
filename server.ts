@@ -2,7 +2,6 @@ import express from "express";
 import imaps from "imap-simple";
 import { simpleParser } from "mailparser";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { Pool } from "pg";
 import axios from "axios";
 import Outscraper from "outscraper";
@@ -888,6 +887,7 @@ async function startServer() {
   // ====== FRONTEND ======
   
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
