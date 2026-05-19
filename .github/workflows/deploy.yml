@@ -34,7 +34,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           source: "dist,package.json,package-lock.json"
-          target: "~/my-app"
+          target: "~/my-ai-crm"
 
       - name: Install Prod Dependencies and Restart Server
         uses: appleboy/ssh-action@v1.0.3
@@ -45,8 +45,8 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             # Ensure the target directory exists
-            mkdir -p ~/my-app
-            cd ~/my-app
+            mkdir -p ~/my-ai-crm
+            cd ~/my-ai-crm
             
             # Install production dependencies
             npm ci --omit=dev
@@ -58,10 +58,10 @@ jobs:
             fi
             
             # Start or restart the PM2 process with PORT=3003
-            pm2 describe my-app > /dev/null
+            pm2 describe my-ai-crm > /dev/null
             if [ $? -eq 0 ]; then
-                PORT=3003 pm2 restart my-app --update-env
+                PORT=3003 pm2 restart my-ai-crm --update-env
             else
-                PORT=3003 pm2 start dist/server.cjs --name my-app
+                PORT=3003 pm2 start dist/server.cjs --name my-ai-crm
             fi
             pm2 save
