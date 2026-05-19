@@ -30,6 +30,7 @@
     "openai": "^6.38.0",
     "outscraper": "^2.2.2",
     "pg": "^8.21.0",
+    "prop-types": "^15.8.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-simple-maps": "^3.0.0",
