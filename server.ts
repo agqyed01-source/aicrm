@@ -895,7 +895,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Note: express@4.x uses '*'
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = __dirname;
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
