@@ -6,12 +6,13 @@ import EmailSystem from './components/EmailSystem';
 import SettingsModal from './components/SettingsModal';
 import AuthScreen from './components/AuthScreen';
 import AdminUsers from './components/AdminUsers';
+import UserProfile from './components/UserProfile';
 import { apiFetch, removeToken } from './lib/api';
 
 export default function App() {
   const [config, setConfig] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
-  const [view, setView] = useState<'public' | 'private' | 'admin' | 'email'>('public');
+  const [view, setView] = useState<'public' | 'private' | 'admin' | 'email' | 'profile'>('public');
   const [showSettings, setShowSettings] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -132,9 +133,18 @@ export default function App() {
               用户管理
             </button>
           )}
+          {user && (
+            <button 
+              onClick={() => setView('profile')}
+              className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'profile' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
+            >
+              <Settings2 className="w-4 h-4 mr-3" />
+              个人资料
+            </button>
+          )}
           <button 
             onClick={() => setShowSettings(true)}
-            className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md text-slate-300 hover:bg-slate-800 transition-colors"
+            className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md text-slate-300 hover:bg-slate-800 transition-colors mt-2"
           >
             <Settings2 className="w-4 h-4 mr-3" />
             系统设置 (AI 配置)
@@ -166,6 +176,8 @@ export default function App() {
           <AdminUsers />
         ) : view === 'email' ? (
           <EmailSystem user={user} />
+        ) : view === 'profile' ? (
+          <UserProfile user={user} onUserUpdate={setUser} />
         ) : view === 'public' ? (
           <PublicPool user={user} hasOutscraper={config.hasOutscraper} />
         ) : (

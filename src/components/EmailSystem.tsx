@@ -24,7 +24,15 @@ export default function EmailSystem({ user }: { user: any }) {
   const [sending, setSending] = useState(false);
   
   // Settings
-  const [newAccount, setNewAccount] = useState({ provider: 'smtp', from_name: '', from_email: '', credential_data: '{}' });
+  const [newAccount, setNewAccount] = useState({ provider: 'smtp', from_name: '', from_email: '' });
+  const [credHost, setCredHost] = useState('');
+  const [credPort, setCredPort] = useState(465);
+  const [credUser, setCredUser] = useState('');
+  const [credPass, setCredPass] = useState('');
+  const [credApi, setCredApi] = useState('');
+  
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const syncEmails = async () => {
     setIsSyncing(true);
@@ -64,26 +72,81 @@ export default function EmailSystem({ user }: { user: any }) {
     loadData();
   }, []);
 
-  const handleAddAccount = async () => {
+  const handleSaveAccount = async () => {
     try {
       let cred = {};
-      try { cred = JSON.parse(newAccount.credential_data); } catch(e) {}
-      await apiFetch('/api/db/email-accounts', {
-        method: 'POST',
+      
+      if (newAccount.provider === 'resend' || newAccount.provider === 'outscraper') {
+        cred = { apiKey: credApi };
+      } else {
+        cred = { host: credHost, port: Number(credPort), user: credUser, pass: credPass };
+      }
+
+      const url = editingAccountId ? `/api/db/email-accounts/${editingAccountId}` : '/api/db/email-accounts';
+      const method = editingAccountId ? 'PUT' : 'POST';
+
+      await apiFetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...newAccount, credential_data: cred })
       });
       loadData();
-      setNewAccount({ provider: 'smtp', from_name: '', from_email: '', credential_data: '{}' });
+      setNewAccount({ provider: 'smtp', from_name: '', from_email: '' });
+      setCredHost('');
+      setCredPort(465);
+      setCredUser('');
+      setCredPass('');
+      setCredApi('');
+      setEditingAccountId(null);
     } catch (e) {
       console.error(e);
+      alert('保存失败!');
     }
   };
 
+  const handleEditAccount = (acc: any) => {
+    setEditingAccountId(acc.id);
+    setNewAccount({
+      provider: acc.provider || 'smtp',
+      from_name: acc.from_name || '',
+      from_email: acc.from_email || ''
+    });
+    
+    // Parse credential data
+    let cred: any = {};
+    try {
+      if (typeof acc.credential_data === 'string') {
+        cred = JSON.parse(acc.credential_data);
+      } else if (acc.credential_data) {
+        cred = acc.credential_data;
+      }
+    } catch (e) {}
+    
+    if (acc.provider === 'resend' || acc.provider === 'outscraper') {
+      setCredApi(cred.apiKey || '');
+    } else {
+      setCredHost(cred.host || '');
+      setCredPort(cred.port || 465);
+      setCredUser(cred.user || '');
+      setCredPass(cred.pass || '');
+    }
+    
+    // reset delete confirm just in case
+    setConfirmDeleteId(null);
+  };
+
   const handleDeleteAccount = async (id: number) => {
-    if (!confirm('确定删除此账号？关联的邮件记录不会被直接删除，但将无法使用该账号发件。')) return;
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
     try {
       await apiFetch(`/api/db/email-accounts/${id}`, { method: 'DELETE' });
+      setConfirmDeleteId(null);
+      if (editingAccountId === id) {
+        setEditingAccountId(null);
+        setNewAccount({ provider: 'smtp', from_name: '', from_email: '' });
+      }
       loadData();
     } catch (e) {
       console.error(e);
@@ -263,8 +326,20 @@ export default function EmailSystem({ user }: { user: any }) {
           {view === 'settings' ? (
             <div className="p-8 max-w-3xl">
               <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
-                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-                  <h3 className="text-sm font-bold text-slate-800">添加新邮箱账号</h3>
+                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-slate-800">{editingAccountId ? '编辑邮箱账号' : '添加新邮箱账号'}</h3>
+                  {editingAccountId && (
+                    <button 
+                      onClick={() => {
+                        setEditingAccountId(null);
+                        setNewAccount({ provider: 'smtp', from_name: '', from_email: '' });
+                        setCredHost(''); setCredPort(465); setCredUser(''); setCredPass(''); setCredApi('');
+                      }}
+                      className="text-xs text-slate-500 hover:text-slate-800 font-semibold"
+                    >
+                      取消编辑
+                    </button>
+                  )}
                 </div>
                 <div className="p-6">
                   <div className="grid grid-cols-2 gap-6">
@@ -299,20 +374,69 @@ export default function EmailSystem({ user }: { user: any }) {
                       />
                     </div>
                     <div className="col-span-2">
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">凭证 (JSON)</label>
-                      <textarea 
-                        className="w-full border border-slate-200 rounded px-3 py-2 text-sm font-mono bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none h-24"
-                        placeholder='{"apiKey": "re_..."} or {"host":"", "port":465, "pass":"..."}'
-                        value={newAccount.credential_data}
-                        onChange={e => setNewAccount({...newAccount, credential_data: e.target.value})}
-                      />
+                      <h4 className="border-b border-slate-100 pb-2 mb-4 text-xs font-bold text-slate-800">凭证信息</h4>
+                      {newAccount.provider === 'resend' ? (
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">API Key</label>
+                          <input 
+                            type="text" 
+                            className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2"
+                            placeholder="re_..."
+                            value={credApi}
+                            onChange={e => setCredApi(e.target.value)}
+                          />
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">主机名 (Host)</label>
+                            <input 
+                              type="text" 
+                              className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              placeholder={newAccount.provider === 'imap' ? 'imap.example.com' : 'smtp.example.com'}
+                              value={credHost}
+                              onChange={e => setCredHost(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">端口 (Port)</label>
+                            <input 
+                              type="number" 
+                              className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              placeholder={newAccount.provider === 'imap' ? '993' : '465'}
+                              value={credPort}
+                              onChange={e => setCredPort(parseInt(e.target.value, 10))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">用户名/邮箱 (User)</label>
+                            <input 
+                              type="text" 
+                              className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              placeholder="youremail@example.com"
+                              value={credUser}
+                              onChange={e => setCredUser(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">密码/授权码 (Password)</label>
+                            <input 
+                              type="password" 
+                              className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              placeholder="********"
+                              value={credPass}
+                              onChange={e => setCredPass(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button 
-                    onClick={handleAddAccount}
+                    onClick={handleSaveAccount}
                     className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-semibold shadow-sm transition-colors"
                   >
-                    添加账号
+                    {editingAccountId ? '保存修改' : '添加账号'}
                   </button>
                 </div>
               </div>
@@ -330,9 +454,17 @@ export default function EmailSystem({ user }: { user: any }) {
                         <div className="font-semibold text-slate-800 text-sm">{acc.from_email}</div>
                         <div className="text-xs text-slate-500 mt-1">{acc.provider.toUpperCase()} · {acc.from_name}</div>
                       </div>
-                      <button onClick={() => handleDeleteAccount(acc.id)} className="text-slate-400 hover:text-red-600 p-2 rounded-md hover:bg-red-50 transition-colors border border-transparent hover:border-red-100">
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleEditAccount(acc)} className="text-slate-400 hover:text-blue-600 p-2 rounded-md hover:bg-blue-50 transition-colors border border-transparent hover:border-blue-100">
+                          <Pencil size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteAccount(acc.id)} 
+                          className={`p-2 rounded-md transition-colors border border-transparent ${confirmDeleteId === acc.id ? 'bg-red-50 text-red-600 border-red-100 px-3' : 'text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-100'}`}
+                        >
+                          {confirmDeleteId === acc.id ? <span className="text-xs font-bold">确认删除?</span> : <Trash2 size={16} />}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

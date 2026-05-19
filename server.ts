@@ -1,8 +1,9 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 import express from "express";
 import imaps from "imap-simple";
 import { simpleParser } from "mailparser";
-import path from "path";
 import { Pool } from "pg";
 import axios from "axios";
 import Outscraper from "outscraper";
@@ -286,6 +287,47 @@ async function startServer() {
       if (rows.length === 0) return res.status(404).json({ error: "User not found" });
       if (rows[0].status !== 'approved') return res.status(403).json({ error: "Account no longer approved" });
       res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/auth/profile", authenticateToken, async (req: any, res: any) => {
+    try {
+      if (!pool || !dbInitialized) return res.status(503).json({ error: "Database not ready" });
+      
+      const { name, password } = req.body;
+      const userId = req.user.id;
+      
+      let query = "UPDATE users SET ";
+      const values: any[] = [];
+      let counter = 1;
+      
+      if (name) {
+        query += `name = $${counter}, `;
+        values.push(name);
+        counter++;
+      }
+      
+      if (password) {
+        const hash = await bcrypt.hash(password, 10);
+        query += `password_hash = $${counter}, `;
+        values.push(hash);
+        counter++;
+      }
+      
+      if (values.length === 0) {
+        return res.json({ message: "No changes made" });
+      }
+      
+      query = query.slice(0, -2); // remove trailing comma and space
+      query += ` WHERE id = $${counter} RETURNING id, name, email, role, status`;
+      values.push(userId);
+      
+      const { rows } = await pool.query(query, values);
+      if (rows.length === 0) return res.status(404).json({ error: "User not found" });
+      
+      res.json({ user: rows[0] });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -692,6 +734,19 @@ async function startServer() {
       const { rows } = await pool!.query(
         "INSERT INTO email_accounts (user_id, provider, from_name, from_email, credential_data) VALUES ($1, $2, $3, $4, $5) RETURNING *",
         [req.user.id, provider, from_name, from_email, JSON.stringify(credential_data)]
+      );
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/db/email-accounts/:id", authenticateToken, async (req: any, res) => {
+    try {
+      const { provider, from_name, from_email, credential_data } = req.body;
+      const { rows } = await pool!.query(
+        "UPDATE email_accounts SET provider = $1, from_name = $2, from_email = $3, credential_data = $4 WHERE id = $5 AND user_id = $6 RETURNING *",
+        [provider, from_name, from_email, JSON.stringify(credential_data), req.params.id, req.user.id]
       );
       res.json(rows[0]);
     } catch (e: any) {
