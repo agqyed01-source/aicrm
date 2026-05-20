@@ -16,6 +16,23 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
+  const updatePreference = (key: string, value: any) => {
+    if (!user) return;
+    const prefs = typeof user.preferences === 'string' ? JSON.parse(user.preferences) : (user.preferences || {});
+    const newPrefs = { ...prefs, [key]: value };
+    setUser({ ...user, preferences: newPrefs });
+    apiFetch('/api/auth/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferences: newPrefs })
+    }).catch(console.error);
+  };
+
+  const handleSetView = (v: any) => {
+    setView(v);
+    updatePreference('lastView', v);
+  };
+
   const fetchConfigAndUser = () => {
     fetch('/api/config')
       .then(r => r.json())
@@ -26,7 +43,13 @@ export default function App() {
             .then(r => r.json())
             .then(u => {
               if (u && !u.error) {
+                if (typeof u.preferences === 'string') {
+                  try { u.preferences = JSON.parse(u.preferences); } catch (e) { u.preferences = {}; }
+                }
                 setUser(u);
+                if (u.preferences?.lastView) {
+                  setView(u.preferences.lastView);
+                }
               } else {
                 removeToken();
               }
@@ -101,14 +124,14 @@ export default function App() {
         </div>
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           <button 
-            onClick={() => setView('public')}
+            onClick={() => handleSetView('public')}
             className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'public' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
           >
             <UserSearch className="w-4 h-4 mr-3" />
             公域客户池
           </button>
           <button 
-            onClick={() => setView('private')}
+            onClick={() => handleSetView('private')}
             className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'private' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
           >
             <Users className="w-4 h-4 mr-3" />
@@ -117,7 +140,7 @@ export default function App() {
           
           <div className="pt-4 pb-2 px-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">系统及工具</div>
           <button 
-            onClick={() => setView('email')}
+            onClick={() => handleSetView('email')}
             className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'email' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
           >
             <Mail className="w-4 h-4 mr-3" />
@@ -126,7 +149,7 @@ export default function App() {
           
           {user?.role === 'super_admin' && (
             <button 
-              onClick={() => setView('admin')}
+              onClick={() => handleSetView('admin')}
               className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'admin' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
             >
               <ShieldCheck className="w-4 h-4 mr-3" />
@@ -135,7 +158,7 @@ export default function App() {
           )}
           {user && (
             <button 
-              onClick={() => setView('profile')}
+              onClick={() => handleSetView('profile')}
               className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${view === 'profile' ? 'text-white bg-slate-800' : 'text-slate-300 hover:bg-slate-800'}`}
             >
               <Settings2 className="w-4 h-4 mr-3" />
@@ -175,13 +198,13 @@ export default function App() {
         {view === 'admin' && user?.role === 'super_admin' ? (
           <AdminUsers />
         ) : view === 'email' ? (
-          <EmailSystem user={user} />
+          <EmailSystem user={user} updatePreference={updatePreference} />
         ) : view === 'profile' ? (
           <UserProfile user={user} onUserUpdate={setUser} />
         ) : view === 'public' ? (
-          <PublicPool user={user} hasOutscraper={config.hasOutscraper} />
+          <PublicPool user={user} hasOutscraper={config.hasOutscraper} updatePreference={updatePreference} />
         ) : (
-          <PrivatePool user={user} />
+          <PrivatePool user={user} updatePreference={updatePreference} />
         )}
       </main>
       

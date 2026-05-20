@@ -10,6 +10,10 @@ import Outscraper from "outscraper";
 import OpenAI from "openai";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import multer from "multer";
+import { parse } from "csv-parse";
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const CLAWBACK_DAYS = 14;
@@ -68,6 +72,7 @@ async function initDB() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'sales';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}';
 
       CREATE TABLE IF NOT EXISTS customers (
         id SERIAL PRIMARY KEY,
@@ -118,6 +123,16 @@ async function initDB() {
           ALTER TABLE customers ADD COLUMN released_at TIMESTAMP;
         EXCEPTION
           WHEN duplicate_column THEN RAISE NOTICE 'column released_at already exists.';
+        END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN source VARCHAR(255);
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column source already exists.';
+        END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN source_keyword VARCHAR(255);
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column source_keyword already exists.';
         END;
       END $$;
 
@@ -283,10 +298,24 @@ async function startServer() {
 
   app.get("/api/auth/me", authenticateToken, async (req: any, res: any) => {
     try {
-      const { rows } = await pool!.query("SELECT id, name, email, role, status FROM users WHERE id = $1", [req.user.id]);
+      const { rows } = await pool!.query("SELECT id, name, email, role, status, preferences FROM users WHERE id = $1", [req.user.id]);
       if (rows.length === 0) return res.status(404).json({ error: "User not found" });
       if (rows[0].status !== 'approved') return res.status(403).json({ error: "Account no longer approved" });
       res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/auth/preferences", authenticateToken, async (req: any, res: any) => {
+    try {
+      if (!pool || !dbInitialized) return res.status(503).json({ error: "Database not ready" });
+      const { preferences } = req.body;
+      const { rows } = await pool.query(
+        "UPDATE users SET preferences = $1 WHERE id = $2 RETURNING preferences",
+        [JSON.stringify(preferences || {}), req.user.id]
+      );
+      res.json({ preferences: rows[0].preferences });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -551,17 +580,57 @@ async function startServer() {
     }
   });
 
+  app.post("/api/db/customers/batch", authenticateToken, upload.single('file'), async (req: any, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    
+    const owner_id = req.body.owner_id === 'null' ? null : (req.body.owner_id ? parseInt(req.body.owner_id) : req.user.id);
+    
+    try {
+      parse(req.file.buffer, { columns: true, skip_empty_lines: true }, async (err, records) => {
+        if (err) return res.status(400).json({ error: err.message });
+        
+        let imported = 0;
+        for (const record of records) {
+          const name = record.name || record.Name || record.NAME;
+          if (!name) continue;
+          
+          const website = record.website || record.Website || "";
+          const phone = record.phone || record.Phone || "";
+          const address = record.address || record.Address || "";
+          const country = record.country || record.Country || "";
+          const province = record.province || record.Province || record.state || "";
+          const city = record.city || record.City || "";
+          const industry = record.industry || record.Industry || "";
+          
+          await pool!.query(
+            "INSERT INTO customers (name, website, phone, address, country, province, city, industry, owner_id, source, source_keyword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            [name, website, phone, address, country, province, city, industry, owner_id, 'csv_import', req.file.originalname]
+          );
+          imported++;
+        }
+        res.json({ success: true, imported });
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Create customer manually
   app.post("/api/db/customers", authenticateToken, async (req: any, res) => {
     try {
-      const { name, website, phone, address, country, province, city, industry, contact_methods } = req.body;
+      const { name, website, phone, address, country, province, city, industry, contact_methods, source, source_keyword, owner_id } = req.body;
       let methodsJson = '[]';
       if (contact_methods) {
           methodsJson = JSON.stringify(contact_methods);
       }
+      
+      const insertOwnerId = owner_id !== undefined ? owner_id : req.user.id;
+      
       const { rows } = await pool!.query(
-        "INSERT INTO customers (name, website, phone, address, country, province, city, industry, contact_methods, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
-        [name, website, phone, address, country, province, city, industry, methodsJson, req.user.id]
+        "INSERT INTO customers (name, website, phone, address, country, province, city, industry, contact_methods, owner_id, source, source_keyword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
+        [name, website, phone, address, country, province, city, industry, methodsJson, insertOwnerId, source || 'manual', source_keyword || null]
       );
       res.json(rows[0]);
     } catch (e: any) {
@@ -646,38 +715,6 @@ async function startServer() {
       
       let optimizedQuery = query;
       
-      // Use AI if configured
-      if (settings.module_outscraper_ai && settings.ai_profiles) {
-        try {
-          const profiles = JSON.parse(settings.ai_profiles);
-          const profile = profiles.find((p: any) => p.id === settings.module_outscraper_ai);
-          
-          if (profile && profile.apiKey) {
-            const openai = new OpenAI({
-              apiKey: profile.apiKey,
-              baseURL: profile.baseURL || "https://api.openai.com/v1"
-            });
-            
-            const model = profile.model || "gpt-3.5-turbo";
-            const completion = await openai.chat.completions.create({
-              model,
-              messages: [
-                { role: "system", content: "You are a helpful assistant that translates user intent into professional English search queries optimized for Google Maps. Given the user's input, output strictly the English query phrase and nothing else. Example: '北京的餐馆' -> 'restaurants in Beijing'" },
-                { role: "user", content: query }
-              ]
-            });
-            
-            if (completion.choices && completion.choices[0] && completion.choices[0].message.content) {
-              optimizedQuery = completion.choices[0].message.content.trim().replace(/^"|"$/g, '');
-              console.log(`Original query: "${query}" -> Optimized: "${optimizedQuery}"`);
-            }
-          }
-        } catch (aiErr: any) {
-          console.error("AI translation failed:", aiErr.message);
-          // If translation fails, we still try parsing with the original query
-        }
-      }
-      
       const client = new Outscraper(apiKey);
       // googleMapsSearch(query, limit, language, region, skip, dropDuplicates, enrichment, asyncRequest)
       const result = await client.googleMapsSearch([optimizedQuery], limit, "en", null, 0, false, null, false);
@@ -704,8 +741,8 @@ async function startServer() {
 
         // Insert into public pool
         await pool!.query(
-          "INSERT INTO customers (name, website, phone, address, country, province, city, industry, tags) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-          [name, website, phone, address, country, province, city, industry, JSON.stringify(tags)]
+          "INSERT INTO customers (name, website, phone, address, country, province, city, industry, tags, source, source_keyword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+          [name, website, phone, address, country, province, city, industry, JSON.stringify(tags), 'outscraper', optimizedQuery]
         );
         imported++;
       }
@@ -717,6 +754,51 @@ async function startServer() {
     }
   });
 
+
+  app.post("/api/outscraper/translate", authenticateToken, async (req: any, res: any) => {
+    try {
+      const { query } = req.body;
+      if (!query) return res.status(400).json({ error: "Query is required" });
+
+      const { rows } = await pool!.query("SELECT * FROM app_settings");
+      const settings = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
+
+      if (!settings.module_outscraper_ai || !settings.ai_profiles) {
+        return res.status(400).json({ error: "AI translation is not configured in settings." });
+      }
+
+      const profiles = JSON.parse(settings.ai_profiles);
+      const profile = profiles.find((p: any) => p.id === settings.module_outscraper_ai);
+
+      if (!profile || !profile.apiKey) {
+        return res.status(400).json({ error: "Selected AI profile is missing API Key." });
+      }
+
+      const openai = new OpenAI({
+        apiKey: profile.apiKey,
+        baseURL: profile.baseURL || "https://api.openai.com/v1"
+      });
+
+      const model = profile.model || "gpt-3.5-turbo";
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: "You are a helpful assistant that translates user intent into professional English search queries optimized for Google Maps. Given the user's input, output strictly the English query phrase and nothing else. Example: '北京的餐馆' -> 'restaurants in Beijing'" },
+          { role: "user", content: query }
+        ]
+      });
+
+      let translated = query;
+      if (completion.choices && completion.choices[0] && completion.choices[0].message.content) {
+        translated = completion.choices[0].message.content.trim().replace(/^"|"$/g, '');
+      }
+
+      res.json({ translated });
+    } catch (e: any) {
+      console.error("Translation error:", e.message);
+      res.status(500).json({ error: "Failed to translate query" });
+    }
+  });
 
   // ====== EMAIL ACCOUNTS ======
   app.get("/api/db/email-accounts", authenticateToken, async (req: any, res) => {

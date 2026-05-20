@@ -30,7 +30,7 @@ export default function AdminUsers() {
         method: 'PATCH',
         body: JSON.stringify({ [field]: value })
       });
-      fetchUsers();
+      setUsers(users.map(u => u.id === id ? { ...u, [field]: value } : u));
     } catch (e) {
       console.error(e);
     }

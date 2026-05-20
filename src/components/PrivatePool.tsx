@@ -6,13 +6,15 @@ import MapChart from './MapChart';
 import CountrySelect from './CountrySelect';
 import { isMatchingSearch } from '../lib/utils';
 
-export default function PrivatePool({ user }: { user: any }) {
+export default function PrivatePool({ user, updatePreference }: { user: any; updatePreference?: (k: string, v: any) => void }) {
+  const prefs = typeof user?.preferences === 'string' ? JSON.parse(user.preferences) : (user?.preferences || {});
+
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'map'>(prefs.privateViewMode || 'list');
   const [tooltipContent, setTooltipContent] = useState('');
-  const [searchTags, setSearchTags] = useState<string[]>([]);
+  const [searchTags, setSearchTags] = useState<string[]>(prefs.privateSearchTags || []);
   const [searchInput, setSearchInput] = useState('');
 
   const loadMyCustomers = () => {
@@ -70,35 +72,45 @@ export default function PrivatePool({ user }: { user: any }) {
     return tagsMatch && inputMatch;
   });
 
+  const handleSetSearchTags = (tags: string[]) => {
+    setSearchTags(tags);
+    updatePreference?.('privateSearchTags', tags);
+  };
+
+  const handleSetViewMode = (mode: 'list' | 'map') => {
+    setViewMode(mode);
+    updatePreference?.('privateViewMode', mode);
+  };
+
   const handleCountryClick = (country: string) => {
     if (!searchTags.includes(country)) {
-      setSearchTags([...searchTags, country]);
+      handleSetSearchTags([...searchTags, country]);
     }
-    setViewMode('list');
+    handleSetViewMode('list');
   };
 
   return (
     <>
       {/* Header */}
-      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
+      <header className="min-h-[4rem] h-auto py-3 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between px-4 sm:px-6 shrink-0 gap-4">
         <div className="flex items-center gap-4">
           <h2 className="text-lg font-bold">我的私域池</h2>
           <div className="flex gap-2">
              <span className="bg-blue-50 text-blue-700 text-xs px-2.5 py-1 rounded-full border border-blue-100 font-medium">已认领: {filtered.length}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center bg-slate-100 rounded p-0.5 border border-slate-200">
             <button 
-              onClick={() => setViewMode('list')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              onClick={() => handleSetViewMode('list')}
+              className={`relative z-10 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <List className="w-3.5 h-3.5" />
               列表
             </button>
             <button 
-              onClick={() => setViewMode('map')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'map' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              onClick={() => handleSetViewMode('map')}
+              className={`relative z-10 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'map' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <Map className="w-3.5 h-3.5" />
               地图
@@ -115,7 +127,7 @@ export default function PrivatePool({ user }: { user: any }) {
             <span key={tag} className="flex items-center bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded">
               {tag}
               <button 
-                onClick={() => setSearchTags(searchTags.filter(t => t !== tag))} 
+                onClick={() => handleSetSearchTags(searchTags.filter(t => t !== tag))} 
                 className="ml-1 hover:text-blue-900 focus:outline-none"
               >
                 <X className="w-3 h-3" />
@@ -133,11 +145,11 @@ export default function PrivatePool({ user }: { user: any }) {
                 e.preventDefault();
                 const text = searchInput.trim();
                 if (text && !searchTags.includes(text)) {
-                  setSearchTags([...searchTags, text]);
+                  handleSetSearchTags([...searchTags, text]);
                   setSearchInput('');
                 }
               } else if (e.key === 'Backspace' && !searchInput && searchTags.length > 0) {
-                setSearchTags(searchTags.slice(0, -1));
+                handleSetSearchTags(searchTags.slice(0, -1));
               }
             }}
           />
@@ -173,7 +185,22 @@ export default function PrivatePool({ user }: { user: any }) {
                     className={`p-4 cursor-pointer transition-colors ${selectedId === c.id ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
                   >
                     <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-medium text-sm text-slate-800">{c.name}</h4>
+                      <div>
+                        <h4 className="font-medium text-sm text-slate-800">{c.name}</h4>
+                        <div className="text-xs text-slate-500 mt-1 font-normal flex flex-wrap gap-2 items-center">
+                          {c.source && (
+                            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px] uppercase border border-slate-200" style={{ transform: 'scale(0.85)', transformOrigin: 'left' }}>
+                              {c.source === 'outscraper' ? 'Outscraper' : c.source === 'csv_import' ? 'CSV' : 'Manual'}
+                            </span>
+                          )}
+                          {c.source === 'outscraper' && c.source_keyword && (
+                            <span className="text-blue-600 text-[10px] truncate max-w-[100px]" style={{ transform: 'scale(0.85)', transformOrigin: 'left' }} title={c.source_keyword}>"{c.source_keyword}"</span>
+                          )}
+                          {c.source === 'csv_import' && c.source_keyword && (
+                            <span className="text-slate-500 text-[10px] truncate max-w-[100px]" style={{ transform: 'scale(0.85)', transformOrigin: 'left' }} title={c.source_keyword}>{c.source_keyword}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 mb-2">
                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${status.color}`}>
@@ -208,7 +235,13 @@ export default function PrivatePool({ user }: { user: any }) {
               <CustomerDetailView 
                 customerId={selectedId} 
                 user={user} 
-                onInteractionLogged={loadMyCustomers}
+                onInteractionLogged={(updatedFields) => {
+                  if (updatedFields) {
+                    setCustomers(customers.map(c => c.id === selectedId ? { ...c, ...updatedFields } : c));
+                  } else {
+                    setCustomers(customers.map(c => c.id === selectedId ? { ...c, last_contacted_at: new Date().toISOString() } : c));
+                  }
+                }}
               />
            ) : (
               <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
@@ -223,7 +256,7 @@ export default function PrivatePool({ user }: { user: any }) {
   );
 }
 
-function CustomerDetailView({ customerId, user, onInteractionLogged }: { customerId: number, user: any, onInteractionLogged: () => void }) {
+function CustomerDetailView({ customerId, user, onInteractionLogged }: { customerId: number, user: any, onInteractionLogged: (updatedFields?: any) => void }) {
   const [customer, setCustomer] = useState<any>(null);
   const [interactions, setInteractions] = useState<any[]>([]);
   const [tab, setTab] = useState<'details' | 'log' | 'info'>('details');
@@ -269,7 +302,7 @@ function CustomerDetailView({ customerId, user, onInteractionLogged }: { custome
       });
       if (r.ok) {
         setCustomer({ ...customer, ...editForm });
-        onInteractionLogged(); // Refresh listing parent to show new name/info
+        onInteractionLogged({ ...editForm }); // Pass the edit form back to update listing
       }
     } catch(e) {
       console.error(e);

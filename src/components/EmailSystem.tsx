@@ -210,8 +210,9 @@ export default function EmailSystem({ user }: { user: any }) {
       });
       
       if (r.ok) {
+        const newEmail = await r.json();
+        setEmails([newEmail, ...emails]);
         setShowCompose(false);
-        loadData();
         setComposeTo('');
         setComposeSubject('');
         setComposeBody('');
