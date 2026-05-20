@@ -27,9 +27,9 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
         try {
           data = JSON.parse(text);
         } catch(e) {
-          throw new Error('Server returned an invalid response (might be starting up). Please try again.');
+          throw new Error('服务器返回无效响应（可能正在启动中），请重试。');
         }
-        if (!res.ok) throw new Error(data.error || 'Login failed');
+        if (!res.ok) throw new Error(data.error || '登录失败');
         setToken(data.token);
         onLogged();
       } else {
@@ -42,10 +42,10 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
         try {
           data = JSON.parse(text);
         } catch(e) {
-          throw new Error('Server returned an invalid response. Please try again.');
+          throw new Error('服务器返回无效响应，请重试。');
         }
-        if (!res.ok) throw new Error(data.error || 'Registration failed');
-        setMsg('Successfully registered! Please wait for an admin to approve your account before logging in.');
+        if (!res.ok) throw new Error(data.error || '注册失败');
+        setMsg('注册成功！请等待管理员审核您的账号后登录。');
         setIsLogin(true);
       }
     } catch (err: any) {
@@ -59,13 +59,13 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
     <div className="flex items-center justify-center min-h-screen bg-slate-100">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-sm">
         <h2 className="text-2xl font-bold mb-6 text-center text-slate-800">
-          {isLogin ? 'Login' : 'Register'}
+          {isLogin ? '登录' : '注册'}
         </h2>
-        {msg && <div className={`text-sm mb-4 p-2 rounded ${msg.includes('wait') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg}</div>}
+        {msg && <div className={`text-sm mb-4 p-2 rounded ${msg.includes('等待') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           {!isLogin && (
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">姓名</label>
               <input
                 required
                 type="text"
@@ -76,7 +76,7 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">邮箱</label>
             <input
               required
               type="email"
@@ -86,7 +86,7 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">密码</label>
             <div className="relative">
               <input
                 required
@@ -109,7 +109,7 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
             disabled={loading}
             className="w-full py-2 px-4 bg-blue-600 text-white rounded font-medium disabled:opacity-50 hover:bg-blue-700"
           >
-            {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}
+            {loading ? '处理中...' : (isLogin ? '登 录' : '注 册')}
           </button>
         </form>
         <div className="mt-4 text-center text-sm">
@@ -117,7 +117,7 @@ export default function AuthScreen({ onLogged }: { onLogged: () => void }) {
             onClick={() => { setIsLogin(!isLogin); setMsg(''); }}
             className="text-blue-600 hover:underline"
           >
-            {isLogin ? 'Need an account? Register' : 'Already have an account? Login'}
+            {isLogin ? '没有账号？立即注册' : '已有账号？立即登录'}
           </button>
         </div>
       </div>

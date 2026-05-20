@@ -28,11 +28,11 @@ export default function UserProfile({ user, onUserUpdate }: { user: any, onUserU
       const data = await res.json();
       
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to update profile');
+        throw new Error(data.error || '更新资料失败');
       }
 
       onUserUpdate({ ...user, name: data.user.name });
-      setMessage({ type: 'success', text: 'Profile updated successfully' });
+      setMessage({ type: 'success', text: '个人资料已更新' });
       setPassword('');
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message });

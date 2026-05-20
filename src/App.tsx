@@ -35,12 +35,23 @@ export default function App() {
 
   const fetchConfigAndUser = () => {
     fetch('/api/config')
-      .then(r => r.json())
+      .then(async (r) => {
+        const ct = r.headers.get("content-type");
+        if (ct && ct.includes("text/html")) {
+          const text = await r.text();
+          throw new Error("API /api/config returned HTML: " + text.substring(0, 100));
+        }
+        return r.json();
+      })
       .then(data => {
         setConfig(data);
         if (data.hasDb) {
           apiFetch('/api/auth/me')
-            .then(r => r.json())
+            .then(async (r) => {
+                const ct = r.headers.get("content-type");
+                if (ct && ct.includes("text/html")) throw new Error("API /api/auth/me returned HTML");
+                return r.json();
+            })
             .then(u => {
               if (u && !u.error) {
                 if (typeof u.preferences === 'string') {
@@ -76,7 +87,14 @@ export default function App() {
   };
 
   if (!config || !authChecked) {
-    return <div className="h-screen w-screen flex items-center justify-center text-slate-500">Loading Configuration...</div>;
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="w-16 h-16 bg-slate-200 rounded-full"></div>
+          <div className="h-4 w-48 bg-slate-200 rounded"></div>
+        </div>
+      </div>
+    );
   }
 
   if (config.hasDb && !user) {
@@ -90,15 +108,15 @@ export default function App() {
           <div className="mx-auto bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center text-blue-600 mb-4">
             <Database size={32} />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Database Setup Required</h1>
+          <h1 className="text-2xl font-bold text-slate-900">需要配置数据库</h1>
           <p className="text-slate-600 text-sm">
-            This CRM requires a PostgreSQL database to function. Please set up a Postgres connection in the AI Studio environment variables setting.
+            此 CRM 需要 PostgreSQL 数据库才能运行。请在 AI Studio 环境变量设置中配置 Postgres 连接。
           </p>
           {config.error && (
             <div className="bg-red-50 text-red-700 p-3 rounded text-sm text-left border border-red-200">
-              <strong>Connection Error:</strong> <span className="font-mono text-xs">{config.error}</span>
+              <strong>连接错误:</strong> <span className="font-mono text-xs">{config.error}</span>
               <div className="mt-2 text-xs text-red-600">
-                If you are getting a timeout, ensure your database firewall allows external connections.
+                如果遇到超时，请确保您的数据库防火墙允许外部网络连接。
               </div>
             </div>
           )}
@@ -106,7 +124,7 @@ export default function App() {
             DATABASE_URL="postgresql://user:pass@host:5432/db"
           </div>
           <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-semibold text-sm w-full shadow-sm transition-colors" onClick={() => window.location.reload()}>
-            I have added the variable, Reload
+            我已添加变量，重新加载页面
           </button>
         </div>
       </div>
@@ -187,7 +205,7 @@ export default function App() {
               {user?.name?.charAt(0) || 'U'}
             </div>
             <div className="flex flex-col text-left min-w-0">
-              <span className="text-xs text-slate-100 font-medium truncate">{user?.name || 'Loading...'} ({user?.role})</span>
+              <span className="text-xs text-slate-100 font-medium truncate">{user?.name || '加载中...'} ({user?.role})</span>
               <span className="text-xs text-slate-400 truncate">{user?.email || ''}</span>
             </div>
           </div>
@@ -204,7 +222,7 @@ export default function App() {
         ) : view === 'public' ? (
           <PublicPool user={user} hasOutscraper={config.hasOutscraper} updatePreference={updatePreference} />
         ) : (
-          <PrivatePool user={user} updatePreference={updatePreference} />
+          <PrivatePool user={user} hasOutscraper={config.hasOutscraper} updatePreference={updatePreference} />
         )}
       </main>
       

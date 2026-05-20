@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Mail, Plus, Trash2, Send, Wand2, RefreshCw, 
   Inbox, Settings, Send as SendIcon, Pencil, X, 
-  Search, ArrowLeft, MoreVertical, CheckSquare, Square, Star, Archive, Eye, EyeOff
+  Search, ArrowLeft, MoreVertical, CheckSquare, Square, Star, Archive, Eye, EyeOff, ShieldCheck
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
@@ -34,6 +34,9 @@ export default function EmailSystem({ user }: { user: any }) {
   
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
+  const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
 
   const syncEmails = async () => {
     setIsSyncing(true);
@@ -73,7 +76,36 @@ export default function EmailSystem({ user }: { user: any }) {
     loadData();
   }, []);
 
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    try {
+      let cred = {};
+      if (newAccount.provider === 'resend' || newAccount.provider === 'outscraper') {
+        cred = { api_key: credApi };
+      } else {
+        cred = { host: credHost, port: Number(credPort), user: credUser, pass: credPass };
+      }
+
+      const res = await apiFetch('/api/db/email-accounts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: newAccount.provider, credential_data: cred })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(data.message || '连接测试成功！');
+      } else {
+        alert(data.error || '测试失败');
+      }
+    } catch (e: any) {
+      alert('测试过程中出现错误：' + e.message);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const handleSaveAccount = async () => {
+    setIsSavingAccount(true);
     try {
       let cred = {};
       
@@ -102,6 +134,8 @@ export default function EmailSystem({ user }: { user: any }) {
     } catch (e) {
       console.error(e);
       alert('保存失败!');
+    } finally {
+      setIsSavingAccount(false);
     }
   };
 
@@ -141,6 +175,7 @@ export default function EmailSystem({ user }: { user: any }) {
       setConfirmDeleteId(id);
       return;
     }
+    setDeletingAccountId(id);
     try {
       await apiFetch(`/api/db/email-accounts/${id}`, { method: 'DELETE' });
       setConfirmDeleteId(null);
@@ -151,6 +186,8 @@ export default function EmailSystem({ user }: { user: any }) {
       loadData();
     } catch (e) {
       console.error(e);
+    } finally {
+      setDeletingAccountId(null);
     }
   };
 
@@ -443,12 +480,24 @@ export default function EmailSystem({ user }: { user: any }) {
                       )}
                     </div>
                   </div>
-                  <button 
-                    onClick={handleSaveAccount}
-                    className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-semibold shadow-sm transition-colors"
-                  >
-                    {editingAccountId ? '保存修改' : '添加账号'}
-                  </button>
+                  <div className="mt-6 flex gap-3">
+                    <button 
+                      onClick={handleTestConnection}
+                      disabled={testingConnection}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-5 py-2 rounded text-sm font-semibold shadow-sm transition-colors border border-slate-300 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {testingConnection ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                      测试连接
+                    </button>
+                    <button 
+                      onClick={handleSaveAccount}
+                      disabled={isSavingAccount}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-semibold shadow-sm transition-colors flex-1 text-center justify-center flex disabled:opacity-50 gap-2 items-center"
+                    >
+                      {isSavingAccount ? <RefreshCw className="w-4 h-4 animate-spin" /> : null}
+                      {editingAccountId ? '保存修改' : '添加账号'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -471,9 +520,10 @@ export default function EmailSystem({ user }: { user: any }) {
                         </button>
                         <button 
                           onClick={() => handleDeleteAccount(acc.id)} 
-                          className={`p-2 rounded-md transition-colors border border-transparent ${confirmDeleteId === acc.id ? 'bg-red-50 text-red-600 border-red-100 px-3' : 'text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-100'}`}
+                          disabled={deletingAccountId === acc.id}
+                          className={`p-2 rounded-md transition-colors border border-transparent disabled:opacity-50 ${confirmDeleteId === acc.id ? 'bg-red-50 text-red-600 border-red-100 px-3' : 'text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-100'}`}
                         >
-                          {confirmDeleteId === acc.id ? <span className="text-xs font-bold">确认删除?</span> : <Trash2 size={16} />}
+                          {deletingAccountId === acc.id ? <RefreshCw className="w-4 h-4 animate-spin mx-auto" /> : (confirmDeleteId === acc.id ? <span className="text-xs font-bold">确认删除?</span> : <Trash2 size={16} />)}
                         </button>
                       </div>
                     </div>
@@ -515,7 +565,20 @@ export default function EmailSystem({ user }: { user: any }) {
             </div>
           ) : (
             <div className="flex flex-col bg-white min-h-full">
-              {displayedEmails.length === 0 ? (
+              {loading ? (
+                <div className="divide-y divide-slate-100 border-b border-slate-100">
+                  {[1,2,3,4,5,6].map(i => (
+                    <div key={i} className="flex items-center gap-4 px-6 py-4">
+                      <div className="h-4 w-32 bg-slate-200 rounded animate-pulse shrink-0"></div>
+                      <div className="flex-1 flex items-center gap-4">
+                        <div className="h-4 w-48 bg-slate-200 rounded animate-pulse shrink-0"></div>
+                        <div className="h-4 w-full bg-slate-100 rounded animate-pulse"></div>
+                      </div>
+                      <div className="h-4 w-12 bg-slate-200 rounded animate-pulse shrink-0"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : displayedEmails.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                   <Inbox className="w-12 h-12 mb-4 opacity-30" />
                   <p className="text-sm font-medium">空空如也</p>

@@ -17,11 +17,12 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
   const [showImport, setShowImport] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCsvModal, setShowCsvModal] = useState(false);
-  const [newCustomerForm, setNewCustomerForm] = useState<any>({});
+  const [newCustomerForm, setNewCustomerForm] = useState<any>({ contact_methods: [{ type: 'email', value: '' }] });
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [importQuery, setImportQuery] = useState(prefs.publicImportQuery || '');
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'map'>(prefs.publicViewMode || 'list');
   const [tooltipContent, setTooltipContent] = useState('');
   const [editingCustomer, setEditingCustomer] = useState<any>(null);
@@ -47,6 +48,7 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
 
   const claimCustomer = async (id: number) => {
     if (!user) return;
+    setActionLoadingId(id);
     try {
       const r = await apiFetch(`/api/db/customers/${id}/claim`, {
         method: 'POST',
@@ -62,10 +64,13 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
     } catch(e) {
       console.error(e);
       alert("认领失败，请重试");
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
   const togglePin = async (id: number, currentPin: boolean) => {
+    setActionLoadingId(id);
     try {
       const r = await apiFetch(`/api/db/customers/${id}`, {
         method: 'PATCH',
@@ -77,6 +82,8 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
       }
     } catch(e) {
       console.error(e);
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -137,7 +144,7 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
       });
       if (r.ok) {
         setShowAddModal(false);
-        setNewCustomerForm({});
+        setNewCustomerForm({ contact_methods: [{ type: 'email', value: '' }] });
         loadCustomers();
       } else {
         const err = await r.json();
@@ -166,6 +173,11 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
         },
         body: formData
       });
+      const ct = r.headers.get('content-type');
+      if (ct && ct.includes('text/html')) {
+          const text = await r.text();
+          throw new Error('API returned HTML unexpectedly: ' + text.substring(0, 100));
+      }
       const data = await r.json();
       if (r.ok && data.success) {
         alert(`Successfully imported ${data.imported} records!`);
@@ -250,7 +262,7 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
         <div className="flex items-center gap-4 hover:border-slate-800">
           <h2 className="text-lg font-bold">公域客户池</h2>
           <div className="flex gap-2">
-            <span className="bg-orange-50 text-orange-700 text-xs px-2.5 py-1 rounded-full border border-orange-100 font-medium">回收机制: 14天未跟进</span>
+            <span className="bg-orange-50 text-orange-700 text-xs px-2.5 py-1 rounded-full border border-orange-100 font-medium">回收机制: 7天未跟进</span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -444,6 +456,71 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
                   className="w-full border-slate-300 rounded p-2 text-sm" 
                 />
               </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Source / 客户来源</label>
+                <div className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 text-slate-500">
+                  手动录入 (Manual)
+                </div>
+              </div>
+              <div className="col-span-2 border-t border-slate-100 pt-4 mt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-slate-500">Contact Methods / 联系方式</label>
+                  <button 
+                    onClick={() => {
+                      const methods = newCustomerForm.contact_methods || [];
+                      setNewCustomerForm({
+                        ...newCustomerForm,
+                        contact_methods: [...methods, { type: 'email', value: '' }]
+                      });
+                    }}
+                    className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> 添加联系方式
+                  </button>
+                </div>
+                {(newCustomerForm.contact_methods || []).map((method: any, index: number) => (
+                  <div key={index} className="flex items-center gap-2 mb-2">
+                    <select
+                      value={method.type}
+                      onChange={(e) => {
+                        const methods = [...(newCustomerForm.contact_methods || [])];
+                        methods[index].type = e.target.value;
+                        setNewCustomerForm({ ...newCustomerForm, contact_methods: methods });
+                      }}
+                      className="border border-slate-300 rounded p-2 text-sm bg-slate-50 w-32"
+                    >
+                      <option value="email">Email</option>
+                      <option value="phone">Phone</option>
+                      <option value="linkedin">LinkedIn</option>
+                      <option value="wechat">WeChat</option>
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={method.value}
+                      onChange={(e) => {
+                        const methods = [...(newCustomerForm.contact_methods || [])];
+                        methods[index].value = e.target.value;
+                        setNewCustomerForm({ ...newCustomerForm, contact_methods: methods });
+                      }}
+                      placeholder="Value"
+                      className="flex-1 border border-slate-300 rounded p-2 text-sm"
+                    />
+                    <button
+                      onClick={() => {
+                        const methods = [...(newCustomerForm.contact_methods || [])];
+                        methods.splice(index, 1);
+                        setNewCustomerForm({ ...newCustomerForm, contact_methods: methods });
+                      }}
+                      className="p-2 text-slate-400 hover:text-red-500 rounded transition-colors"
+                      title="Remove"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="p-6 border-t border-slate-100 flex-shrink-0 flex justify-end gap-3 bg-slate-50">
@@ -505,7 +582,22 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
       {/* Table Container */}
       <div className="flex-1 overflow-hidden p-6 flex flex-col">
         {loading ? (
-             <div className="py-20 text-center text-slate-500 text-sm">加载中...</div>
+          <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm flex-1">
+            <div className="h-10 bg-slate-50 border-b border-slate-200"></div>
+            <div className="divide-y divide-slate-100">
+               {[1,2,3,4,5,6,7].map(i => (
+                  <div key={i} className="flex items-center gap-4 p-4">
+                    <div className="h-4 w-4 bg-slate-200 rounded animate-pulse shrink-0"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 w-1/4 bg-slate-200 rounded animate-pulse"></div>
+                      <div className="h-3 w-1/3 bg-slate-100 rounded animate-pulse"></div>
+                    </div>
+                    <div className="h-4 w-16 bg-slate-200 rounded animate-pulse shrink-0"></div>
+                    <div className="h-6 w-20 bg-slate-100 rounded animate-pulse shrink-0"></div>
+                  </div>
+               ))}
+            </div>
+          </div>
         ) : (
           <div className="bg-white rounded-lg border border-slate-200 h-full flex flex-col overflow-hidden shadow-sm relative">
             {viewMode === 'map' ? (
@@ -536,9 +628,10 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
                        <td className="px-4 py-3 text-center">
                          <button 
                            onClick={() => togglePin(c.id, c.is_pinned)}
-                           className={c.is_pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-400'}
+                           disabled={actionLoadingId === c.id}
+                           className={`${c.is_pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-400'} disabled:opacity-50`}
                          >
-                           {c.is_pinned ? '⭐' : '☆'}
+                           {actionLoadingId === c.id ? <RefreshCw className="w-3 h-3 animate-spin mx-auto" /> : (c.is_pinned ? '⭐' : '☆')}
                          </button>
                        </td>
                        <td className="px-4 py-3 font-medium text-slate-900">
@@ -589,9 +682,10 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
                            )}
                            <button 
                              onClick={() => claimCustomer(c.id)}
-                             className="text-blue-600 hover:underline font-semibold text-xs text-nowrap"
+                             disabled={actionLoadingId === c.id}
+                             className="text-blue-600 hover:underline font-semibold text-xs text-nowrap disabled:opacity-50 disabled:no-underline"
                            >
-                             立即认领
+                             {actionLoadingId === c.id ? '处理中...' : '立即认领'}
                            </button>
                          </div>
                        </td>
@@ -704,6 +798,13 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
                       onChange={e => setEditingCustomer({ ...editingCustomer, website: e.target.value })}
                     />
                   </div>
+                  <div className="col-span-1 md:col-span-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">客户来源</label>
+                    <div className="w-full text-sm bg-slate-100/70 border border-slate-200 rounded p-2 text-slate-600">
+                      {editingCustomer.source === 'outscraper' ? 'Outscraper 采集' : editingCustomer.source === 'csv_import' ? 'CSV 导入' : '手动录入'}
+                      {editingCustomer.source_keyword && <span className="text-slate-500 ml-1">({editingCustomer.source_keyword})</span>}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -735,7 +836,7 @@ export default function PublicPool({ user, hasOutscraper, updatePreference }: { 
           Postgres DB Connected (Primary)
         </div>
         <div className="ml-auto italic uppercase tracking-widest text-slate-400">
-          Recycle Engine: 14d Inactivity Threshold
+          Recycle Engine: 7d Inactivity Threshold
         </div>
       </footer>
     </>

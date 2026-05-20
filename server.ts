@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 import express from "express";
+import nodemailer from "nodemailer";
 import imaps from "imap-simple";
 import { simpleParser } from "mailparser";
 import { Pool } from "pg";
@@ -16,7 +17,7 @@ import { parse } from "csv-parse";
 const upload = multer({ storage: multer.memoryStorage() });
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const CLAWBACK_DAYS = 14;
+const CLAWBACK_DAYS = 7;
 const JWT_SECRET = process.env.JWT_SECRET || "fallback_super_secret_for_dev_12345";
 
 // Global pool variable, initialized gracefully
@@ -134,6 +135,21 @@ async function initDB() {
         EXCEPTION
           WHEN duplicate_column THEN RAISE NOTICE 'column source_keyword already exists.';
         END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN ai_agent_status VARCHAR(50) DEFAULT 'none';
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column ai_agent_status already exists.';
+        END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN ai_agent_workflow JSONB DEFAULT '{}';
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column ai_agent_workflow already exists.';
+        END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN ai_agent_next_run TIMESTAMP;
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column ai_agent_next_run already exists.';
+        END;
       END $$;
 
       CREATE TABLE IF NOT EXISTS email_accounts (
@@ -225,6 +241,80 @@ setInterval(async () => {
     console.error("Clawback error:", err);
   }
 }, 60 * 60 * 1000); // Check every hour
+
+// AI Agent Background Worker
+setInterval(async () => {
+  if (!pool || !dbInitialized) return;
+  try {
+    const { rows: dueCustomers } = await pool.query(`
+      SELECT * FROM customers 
+      WHERE ai_agent_status = 'active' AND ai_agent_next_run <= NOW()
+    `);
+
+    if (dueCustomers.length === 0) return;
+
+    // Load AI Profile
+    const { rows: appSettings } = await pool.query("SELECT * FROM app_settings");
+    const settings = appSettings.reduce((acc: any, row: any) => ({ ...acc, [row.key]: row.value }), {});
+    if (!settings.ai_profiles || !settings.module_email_ai) return;
+
+    const profiles = JSON.parse(settings.ai_profiles);
+    const profile = profiles.find((p: any) => p.id === settings.module_email_ai);
+    if (!profile) return;
+
+    const openai = new OpenAI({
+      apiKey: profile.apiKey,
+      baseURL: profile.baseURL || "https://api.openai.com/v1"
+    });
+
+    for (const customer of dueCustomers) {
+      let workflow = customer.ai_agent_workflow;
+      if (typeof workflow === 'string') workflow = JSON.parse(workflow);
+      if (!workflow || !workflow.prompt) continue;
+
+      workflow.current_step = (workflow.current_step || 0) + 1;
+
+      try {
+        const completion = await openai.chat.completions.create({
+          model: profile.model || "gpt-3.5-turbo",
+          messages: [
+            { role: "system", content: `You are an autonomous AI sales agent following up with a potential B2B customer. You are on step ${workflow.current_step} of ${workflow.max_steps || 3}. Goal prompt: ${workflow.prompt}. Generate a short, compelling email body.` },
+            { role: "user", content: `Customer Name: ${customer.name}, Website: ${customer.website || 'N/A'}, Industry: ${customer.industry || 'N/A'}` }
+          ]
+        });
+        const content = completion.choices[0].message.content;
+
+        // Try to find the owner's email account to send
+        if (customer.owner_id) {
+          const { rows: emailAccs } = await pool.query("SELECT * FROM email_accounts WHERE user_id = $1", [customer.owner_id]);
+          if (emailAccs.length > 0) {
+             // For now we just log it as an interaction, and maybe send it via nodemailer (similar to /api/email/send)
+             // Simulating sending...
+          }
+        }
+
+        // Add interaction log
+        await pool.query(
+          "INSERT INTO interactions (customer_id, user_id, type, notes) VALUES ($1, $2, $3, $4)",
+          [customer.id, customer.owner_id, "email", `[AI Agent Follow-up Step ${workflow.current_step}]:\n\n${content}`]
+        );
+
+        if (workflow.current_step >= (workflow.max_steps || 3)) {
+          // Finish workflow
+          await pool.query("UPDATE customers SET ai_agent_status = 'completed', ai_agent_next_run = NULL, ai_agent_workflow = $1 WHERE id = $2", [JSON.stringify(workflow), customer.id]);
+        } else {
+           // Schedule next
+           const intervalDays = workflow.interval_days || 3;
+           await pool.query(`UPDATE customers SET ai_agent_workflow = $1, ai_agent_next_run = NOW() + INTERVAL '${intervalDays} days' WHERE id = $2`, [JSON.stringify(workflow), customer.id]);
+        }
+      } catch (err) {
+        console.error("AI Agent error for customer " + customer.id, err);
+      }
+    }
+  } catch (err) {
+    console.error("AI Agent loop error:", err);
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
 
 
 async function startServer() {
@@ -516,9 +606,10 @@ async function startServer() {
   });
 
   // Update customer (tags, pins, etc)
+  // Update customer (tags, pins, etc)
   app.patch("/api/db/customers/:id", async (req, res) => {
     try {
-      const { tags, is_pinned, name, website, phone, address, country, province, city, industry, contact_methods } = req.body;
+      const { tags, is_pinned, name, website, phone, address, country, province, city, industry, contact_methods, ai_agent_status, ai_agent_workflow, ai_agent_next_run } = req.body;
       let updates = [];
       let params = [];
       let paramCount = 1;
@@ -567,6 +658,22 @@ async function startServer() {
         updates.push(`contact_methods = $${paramCount++}`);
         params.push(JSON.stringify(contact_methods));
       }
+      if (ai_agent_status !== undefined) {
+        updates.push(`ai_agent_status = $${paramCount++}`);
+        params.push(ai_agent_status);
+      }
+      if (ai_agent_workflow !== undefined) {
+        updates.push(`ai_agent_workflow = $${paramCount++}`);
+        params.push(JSON.stringify(ai_agent_workflow));
+      }
+      if (ai_agent_next_run !== undefined) {
+        if (ai_agent_next_run === null) {
+          updates.push(`ai_agent_next_run = NULL`);
+        } else {
+          updates.push(`ai_agent_next_run = $${paramCount++}`);
+          params.push(ai_agent_next_run);
+        }
+      }
       
       if (updates.length === 0) return res.json({ success: true });
 
@@ -575,6 +682,35 @@ async function startServer() {
       
       const { rowCount } = await pool!.query(queryStr, params);
       res.json({ success: rowCount === 1 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Delegate customer to AI Agent
+  app.post("/api/db/customers/:id/ai-agent", authenticateToken, async (req: any, res) => {
+    try {
+      const { workflow } = req.body;
+      const { rowCount } = await pool!.query(
+        "UPDATE customers SET ai_agent_status = 'active', ai_agent_workflow = $1, ai_agent_next_run = NOW() WHERE id = $2 AND owner_id = $3", 
+        [JSON.stringify(workflow), req.params.id, req.user.id]
+      );
+      if (rowCount === 0) return res.status(403).json({ error: "Not authorized or customer not found" });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Stop AI Agent
+  app.post("/api/db/customers/:id/ai-agent/stop", authenticateToken, async (req: any, res) => {
+    try {
+      const { rowCount } = await pool!.query(
+        "UPDATE customers SET ai_agent_status = 'paused', ai_agent_next_run = NULL WHERE id = $1 AND owner_id = $2", 
+        [req.params.id, req.user.id]
+      );
+      if (rowCount === 0) return res.status(403).json({ error: "Not authorized or customer not found" });
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -707,7 +843,8 @@ async function startServer() {
     }
 
     try {
-      let { query, limit = 10 } = req.body;
+      let { query, limit = 10, owner_id } = req.body;
+      const targetOwner = owner_id || null;
       
       // Fetch AI settings
       const { rows } = await pool!.query("SELECT * FROM app_settings");
@@ -739,10 +876,10 @@ async function startServer() {
         const industry = place.type || "";
         const tags = place.subtypes ? place.subtypes : [];
 
-        // Insert into public pool
+        // Insert into pool
         await pool!.query(
-          "INSERT INTO customers (name, website, phone, address, country, province, city, industry, tags, source, source_keyword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-          [name, website, phone, address, country, province, city, industry, JSON.stringify(tags), 'outscraper', optimizedQuery]
+          "INSERT INTO customers (name, website, phone, address, country, province, city, industry, tags, source, source_keyword, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+          [name, website, phone, address, country, province, city, industry, JSON.stringify(tags), 'outscraper', optimizedQuery, targetOwner]
         );
         imported++;
       }
@@ -801,6 +938,53 @@ async function startServer() {
   });
 
   // ====== EMAIL ACCOUNTS ======
+  app.post("/api/db/email-accounts/test", authenticateToken, async (req: any, res) => {
+    try {
+      const { provider, credential_data } = req.body;
+      
+      if (provider === 'smtp') {
+        const { host, port, user, pass } = credential_data;
+        const transporter = nodemailer.createTransport({
+          host,
+          port: parseInt(port, 10),
+          secure: parseInt(port, 10) === 465,
+          auth: { user, pass }
+        });
+        await transporter.verify();
+        return res.json({ success: true, message: "SMTP Connection successful." });
+      } else if (provider === 'imap') {
+        const { host, port, user, pass } = credential_data;
+        const config = {
+          imap: {
+            user,
+            password: pass,
+            host,
+            port: parseInt(port, 10),
+            tls: parseInt(port, 10) === 993,
+            tlsOptions: { rejectUnauthorized: false }
+          }
+        };
+        const connection = await imaps.connect(config);
+        connection.end();
+        return res.json({ success: true, message: "IMAP Connection successful." });
+      } else if (provider === 'resend') {
+        const { api_key } = credential_data;
+        const r = await axios.get('https://api.resend.com/domains', {
+          headers: { Authorization: `Bearer ${api_key}` }
+        });
+        if (r.status === 200) {
+          return res.json({ success: true, message: "Resend API connection successful." });
+        } else {
+          return res.status(400).json({ error: "Invalid Resend API token" });
+        }
+      }
+      return res.status(400).json({ error: "Unknown provider or missing credentials" });
+    } catch (e: any) {
+      console.error("Test connection failed:", e);
+      return res.status(500).json({ error: e.message || "Failed to connect" });
+    }
+  });
+
   app.get("/api/db/email-accounts", authenticateToken, async (req: any, res) => {
     try {
       const { rows } = await pool!.query("SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY created_at DESC", [req.user.id]);
@@ -1022,8 +1206,19 @@ async function startServer() {
     }
   });
 
-  // ====== FRONTEND ======
-  
+  // ====== API 404 and Error Handlers ======
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'API endpoint not found' });
+  });
+
+  app.use((err: any, req: any, res: any, next: any) => {
+    if (req.path.startsWith('/api/')) {
+       console.error("Express API Error:", err);
+       return res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
+    }
+    next(err);
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({

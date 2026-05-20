@@ -22,6 +22,13 @@ export async function apiFetch(url: string, options: RequestInit = {}) {
   if (response.status === 401) {
     removeToken();
   }
+  
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.includes("text/html")) {
+    const text = await response.text();
+    console.error(`API Error: ${url} returned HTML. Body snippet: `, text.substring(0, 200));
+    throw new Error(`API Endpoint ${url} returned HTML instead of JSON. Expected API response.`);
+  }
 
   return response;
 }

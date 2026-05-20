@@ -100,7 +100,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         
         <div className="p-6 overflow-y-auto flex-1 bg-slate-100/50">
           {loading ? (
-            <div className="py-10 text-center text-slate-500 text-sm">加载中...</div>
+            <div className="space-y-6">
+              {[1,2].map(i => (
+                <div key={i} className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm space-y-4 animate-pulse">
+                  <div className="h-4 w-1/3 bg-slate-200 rounded"></div>
+                  <div className="flex flex-col gap-4">
+                    <div className="h-8 w-full bg-slate-100 rounded"></div>
+                    <div className="h-8 w-full bg-slate-100 rounded"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="space-y-6">
               
