@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
-export default function EmailSystem({ user }: { user: any }) {
+export default function EmailSystem({ user, updatePreference }: { user: any, updatePreference?: any }) {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
   const [view, setView] = useState<'inbox' | 'sent' | 'settings'>('inbox');

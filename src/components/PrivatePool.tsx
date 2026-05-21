@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Phone, AlertTriangle, ArrowUpRight, MessageSquare, Plus, Search, Map, List, Trash2, Wand2, X, UploadCloud, DownloadCloud, RefreshCw, Bot } from 'lucide-react';
+import { Clock, Phone, AlertTriangle, ArrowUpRight, MessageSquare, Plus, Search, Map, List, Trash2, Wand2, X, UploadCloud, DownloadCloud, RefreshCw, Bot, Kanban } from 'lucide-react';
 import { formatDistanceToNow, differenceInDays } from 'date-fns';
 import { apiFetch } from '../lib/api';
 import MapChart from './MapChart';
@@ -13,7 +13,7 @@ export default function PrivatePool({ user, hasOutscraper, updatePreference }: {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>(prefs.privateViewMode || 'list');
+  const [viewMode, setViewMode] = useState<'list' | 'map' | 'pipeline'>(prefs.privateViewMode || 'list');
   const [tooltipContent, setTooltipContent] = useState('');
   const [searchTags, setSearchTags] = useState<string[]>(prefs.privateSearchTags || []);
   const [searchInput, setSearchInput] = useState('');
@@ -179,9 +179,22 @@ export default function PrivatePool({ user, hasOutscraper, updatePreference }: {
     updatePreference?.('privateSearchTags', tags);
   };
 
-  const handleSetViewMode = (mode: 'list' | 'map') => {
+  const handleSetViewMode = (mode: 'list' | 'map' | 'pipeline') => {
     setViewMode(mode);
     updatePreference?.('privateViewMode', mode);
+  };
+
+  const handleUpdateStage = async (id: number, stage: string) => {
+    setCustomers(customers.map(c => c.id === id ? { ...c, stage } : c));
+    try {
+      await apiFetch(`/api/db/customers/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage })
+      });
+    } catch(e) {
+      console.error('Failed to update stage', e);
+    }
   };
 
   const handleCountryClick = (country: string) => {
@@ -209,6 +222,13 @@ export default function PrivatePool({ user, hasOutscraper, updatePreference }: {
             >
               <List className="w-3.5 h-3.5" />
               列表
+            </button>
+            <button 
+              onClick={() => handleSetViewMode('pipeline')}
+              className={`relative z-10 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded ${viewMode === 'pipeline' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Kanban className="w-3.5 h-3.5" />
+              阶段
             </button>
             <button 
               onClick={() => handleSetViewMode('map')}
@@ -518,6 +538,55 @@ export default function PrivatePool({ user, hasOutscraper, updatePreference }: {
               </div>
             )}
           </div>
+        ) : viewMode === 'pipeline' ? (
+          <div className="w-full h-full bg-slate-50/50 rounded-lg border border-slate-200 overflow-x-auto flex gap-4 p-4 shadow-inner min-h-[500px]">
+            {[
+              { id: 'uncontacted', label: '未联系', color: 'bg-slate-200 text-slate-700' },
+              { id: 'contacted', label: '已跟进', color: 'bg-blue-100 text-blue-700' },
+              { id: 'qualified', label: '意向中', color: 'bg-purple-100 text-purple-700' },
+              { id: 'proposal', label: '方案/报价', color: 'bg-orange-100 text-orange-700' },
+              { id: 'won', label: '成交入库', color: 'bg-green-100 text-green-700' },
+              { id: 'lost', label: '丢单/无意向', color: 'bg-red-100 text-red-700' }
+            ].map(stage => (
+              <div 
+                key={stage.id} 
+                className="w-72 shrink-0 flex flex-col h-full bg-slate-100/50 rounded-lg p-3"
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => {
+                  e.preventDefault();
+                  const customerId = parseInt(e.dataTransfer.getData('customerId'), 10);
+                  if (customerId) handleUpdateStage(customerId, stage.id);
+                }}
+              >
+                <div className="flex items-center justify-between mb-3 px-1 hover:cursor-default">
+                  <h3 className={`text-xs font-bold px-2 py-0.5 rounded-full ${stage.color}`}>{stage.label}</h3>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {filtered.filter(c => (c.stage === stage.id) || (stage.id === 'uncontacted' && !c.stage)).length}
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-3">
+                  {filtered.filter(c => (c.stage === stage.id) || (stage.id === 'uncontacted' && !c.stage)).map(c => (
+                    <div
+                      key={c.id}
+                      draggable
+                      onDragStart={e => e.dataTransfer.setData('customerId', c.id.toString())}
+                      onClick={() => {
+                        setSelectedId(c.id);
+                        handleSetViewMode('list');
+                      }}
+                      className={`bg-white p-3 rounded shadow-sm border ${selectedId === c.id ? 'border-blue-500 shadow-md ring-1 ring-blue-500' : 'border-slate-200'} cursor-pointer hover:border-blue-400 hover:shadow transition-all group`}
+                    >
+                      <div className="font-semibold text-sm mb-1 group-hover:text-blue-600">{c.name}</div>
+                      <div className="text-xs text-slate-500 flex flex-col gap-1">
+                        {c.country && <div className="truncate">📍 {c.country}</div>}
+                        {c.industry && <div className="truncate">🏭 {c.industry}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             {/* Left List */}
@@ -669,6 +738,7 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
           province: editForm.province,
           city: editForm.city,
           industry: editForm.industry,
+          stage: editForm.stage,
           contact_methods: editForm.contact_methods
         })
       });
@@ -857,6 +927,21 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="col-span-1 md:col-span-2">
+                <label className="block text-sm font-semibold text-slate-700 mb-1">跟进阶段</label>
+                <select 
+                  className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={editForm.stage || 'uncontacted'}
+                  onChange={e => setEditForm({ ...editForm, stage: e.target.value })}
+                >
+                  <option value="uncontacted">未联系 (Uncontacted)</option>
+                  <option value="contacted">已跟进 (Contacted)</option>
+                  <option value="qualified">意向中 (Qualified)</option>
+                  <option value="proposal">方案/报价 (Proposal/Quote)</option>
+                  <option value="won">成交入库 (Won)</option>
+                  <option value="lost">丢单/无意向 (Lost)</option>
+                </select>
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">国家</label>
                 <CountrySelect 

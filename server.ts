@@ -150,6 +150,11 @@ async function initDB() {
         EXCEPTION
           WHEN duplicate_column THEN RAISE NOTICE 'column ai_agent_next_run already exists.';
         END;
+        BEGIN
+          ALTER TABLE customers ADD COLUMN stage VARCHAR(50) DEFAULT 'uncontacted';
+        EXCEPTION
+          WHEN duplicate_column THEN RAISE NOTICE 'column stage already exists.';
+        END;
       END $$;
 
       CREATE TABLE IF NOT EXISTS email_accounts (
@@ -267,45 +272,48 @@ setInterval(async () => {
       baseURL: profile.baseURL || "https://api.openai.com/v1"
     });
 
-    for (const customer of dueCustomers) {
+      for (const customer of dueCustomers) {
       let workflow = customer.ai_agent_workflow;
       if (typeof workflow === 'string') workflow = JSON.parse(workflow);
-      if (!workflow || !workflow.prompt) continue;
+      if (!workflow) continue;
 
-      workflow.current_step = (workflow.current_step || 0) + 1;
+      const currentStepIndex = workflow.current_step || 0;
+      const stepConfig = (workflow.steps && workflow.steps.length > currentStepIndex) 
+          ? workflow.steps[currentStepIndex] 
+          : { prompt: workflow.prompt, channel: workflow.channel || 'email' };
+      
+      const totalSteps = workflow.steps ? workflow.steps.length : (workflow.max_steps || 3);
+      if (currentStepIndex >= totalSteps) continue;
 
       try {
         const completion = await openai.chat.completions.create({
           model: profile.model || "gpt-3.5-turbo",
           messages: [
-            { role: "system", content: `You are an autonomous AI sales agent following up with a potential B2B customer. You are on step ${workflow.current_step} of ${workflow.max_steps || 3}. Goal prompt: ${workflow.prompt}. Generate a short, compelling email body.` },
+            { role: "system", content: `You are an autonomous AI sales agent following up with a potential B2B customer. You are on step ${currentStepIndex + 1} of ${totalSteps}. Overall goal: ${workflow.prompt || 'Follow up'}. Step-specific instructions: ${stepConfig.prompt || 'Draft a follow-up message.'}. Contact channel: ${stepConfig.channel}. Generate a short, compelling message draft for this channel.` },
             { role: "user", content: `Customer Name: ${customer.name}, Website: ${customer.website || 'N/A'}, Industry: ${customer.industry || 'N/A'}` }
           ]
         });
-        const content = completion.choices[0].message.content;
 
-        // Try to find the owner's email account to send
-        if (customer.owner_id) {
-          const { rows: emailAccs } = await pool.query("SELECT * FROM email_accounts WHERE user_id = $1", [customer.owner_id]);
-          if (emailAccs.length > 0) {
-             // For now we just log it as an interaction, and maybe send it via nodemailer (similar to /api/email/send)
-             // Simulating sending...
-          }
-        }
+        const content = completion.choices[0].message.content;
 
         // Add interaction log
         await pool.query(
           "INSERT INTO interactions (customer_id, user_id, type, notes) VALUES ($1, $2, $3, $4)",
-          [customer.id, customer.owner_id, "email", `[AI Agent Follow-up Step ${workflow.current_step}]:\n\n${content}`]
+          [customer.id, customer.owner_id, "ai_generation", `[AI Agent Step ${currentStepIndex + 1} - ${stepConfig.channel}]:\n\n${content}`]
         );
 
-        if (workflow.current_step >= (workflow.max_steps || 3)) {
+        workflow.current_step = currentStepIndex + 1;
+
+        if (workflow.current_step >= totalSteps) {
           // Finish workflow
           await pool.query("UPDATE customers SET ai_agent_status = 'completed', ai_agent_next_run = NULL, ai_agent_workflow = $1 WHERE id = $2", [JSON.stringify(workflow), customer.id]);
         } else {
            // Schedule next
-           const intervalDays = workflow.interval_days || 3;
-           await pool.query(`UPDATE customers SET ai_agent_workflow = $1, ai_agent_next_run = NOW() + INTERVAL '${intervalDays} days' WHERE id = $2`, [JSON.stringify(workflow), customer.id]);
+           let nextIntervalDays = workflow.interval_days || 3;
+           if (workflow.steps && workflow.steps.length > workflow.current_step) {
+               nextIntervalDays = workflow.steps[workflow.current_step].delayDays || 0;
+           }
+           await pool.query(`UPDATE customers SET ai_agent_workflow = $1, ai_agent_next_run = NOW() + INTERVAL '${nextIntervalDays} days' WHERE id = $2`, [JSON.stringify(workflow), customer.id]);
         }
       } catch (err) {
         console.error("AI Agent error for customer " + customer.id, err);
@@ -609,7 +617,7 @@ async function startServer() {
   // Update customer (tags, pins, etc)
   app.patch("/api/db/customers/:id", async (req, res) => {
     try {
-      const { tags, is_pinned, name, website, phone, address, country, province, city, industry, contact_methods, ai_agent_status, ai_agent_workflow, ai_agent_next_run } = req.body;
+      const { tags, is_pinned, name, website, phone, address, country, province, city, industry, stage, contact_methods, ai_agent_status, ai_agent_workflow, ai_agent_next_run } = req.body;
       let updates = [];
       let params = [];
       let paramCount = 1;
@@ -653,6 +661,10 @@ async function startServer() {
       if (industry !== undefined) {
         updates.push(`industry = $${paramCount++}`);
         params.push(industry);
+      }
+      if (stage !== undefined) {
+        updates.push(`stage = $${paramCount++}`);
+        params.push(stage);
       }
       if (contact_methods !== undefined) {
         updates.push(`contact_methods = $${paramCount++}`);
@@ -724,7 +736,7 @@ async function startServer() {
     const owner_id = req.body.owner_id === 'null' ? null : (req.body.owner_id ? parseInt(req.body.owner_id) : req.user.id);
     
     try {
-      parse(req.file.buffer, { columns: true, skip_empty_lines: true }, async (err, records) => {
+      parse(req.file.buffer, { columns: true, skip_empty_lines: true }, async (err, records: any[]) => {
         if (err) return res.status(400).json({ error: err.message });
         
         let imported = 0;
@@ -1100,7 +1112,8 @@ async function startServer() {
             const text = parsed.text || parsed.html || '';
             const threadId = parsed.messageId || String(id);
             const fromAdd = (parsed.from?.value as any)?.[0]?.address || '';
-            const toAdd = (parsed.to?.value as any)?.[0]?.address || '';
+            const toObj = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
+            const toAdd = (toObj?.value as any)?.[0]?.address || '';
             
             const existing = await pool!.query("SELECT id FROM emails WHERE account_id = $1 AND thread_id = $2", [account.id, threadId]);
             if (existing.rows.length === 0) {

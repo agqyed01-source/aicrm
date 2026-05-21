@@ -4,36 +4,87 @@ import { Bot, X } from 'lucide-react';
 
 export function AiAgentModal({ customer, user, updatePreference, onClose, onUpdate }: { customer: any, user: any, updatePreference: any, onClose: () => void, onUpdate: () => void }) {
   const defaultWorkflows = [
-    { id: 'w1', name: '新客户破冰', channel: 'email', prompt: '介绍我们的公司和产品优势，尝试预约一个15分钟的线上会议。注意语气专业、热情。', maxSteps: 3, intervalDays: 3 },
-    { id: 'w2', name: '展会后跟进', channel: 'email', prompt: '感谢客户参观我们的展位，附上我们的产品目录链接，询问他们目前的采购计划。', maxSteps: 4, intervalDays: 2 },
-    { id: 'w3', name: '定期唤醒', channel: 'email', prompt: '分享我们最近的新产品或行业动态，询问客户最近是否有新的需求可以合作。', maxSteps: 2, intervalDays: 7 },
-    { id: 'w4', name: 'WhatsApp 快速跟进', channel: 'whatsapp', prompt: '用简短的语言询问近况，并附上一张产品的最新图片/海报。', maxSteps: 2, intervalDays: 3 }
+    { 
+      id: 'w1', name: '新客户破冰', channel: 'email', prompt: '介绍我们的公司和产品优势，尝试预约一个15分钟的线上会议。注意语气专业、热情。', 
+      steps: [
+        { id: '1', channel: 'email', delayDays: 0, prompt: '介绍我们的公司和产品优势，尝试预约线上会议。' },
+        { id: '2', channel: 'email', delayDays: 3, prompt: '询问是否收到上一封邮件，提供额外的客户成功案例。' },
+        { id: '3', channel: 'email', delayDays: 3, prompt: '最后一次跟进，询问目前是否有合适的项目可以合作或保持联系。' }
+      ]
+    },
+    { 
+      id: 'w2', name: '展会后跟进', channel: 'email', prompt: '感谢客户参观我们的展位，附上我们的产品目录链接，询问他们目前的采购计划。', 
+      steps: [
+        { id: '1', channel: 'email', delayDays: 0, prompt: '感谢客户参观展位，附上产品目录链接。' },
+        { id: '2', channel: 'email', delayDays: 2, prompt: '询问是否需要进一步的产品解答或报价。' },
+        { id: '3', channel: 'email', delayDays: 2, prompt: '提供展会专属的折扣或免费样品体验。' },
+        { id: '4', channel: 'email', delayDays: 2, prompt: '询问近期的采购计划是否已经确定。' }
+      ] 
+    },
+    { 
+      id: 'w3', name: '定期唤醒', channel: 'email', prompt: '分享我们最近的新产品或行业动态，询问客户最近是否有新的需求可以合作。', 
+      steps: [
+        { id: '1', channel: 'email', delayDays: 0, prompt: '分享最近的新产品更新和行业动态。' },
+        { id: '2', channel: 'email', delayDays: 7, prompt: '询问客户目前团队是否有痛点，推荐相关解决方案。' }
+      ] 
+    },
+    { 
+      id: 'w4', name: 'WhatsApp 快速跟进', channel: 'whatsapp', prompt: '用简短的语言询问近况，并附上一张产品的最新图片/海报。', 
+      steps: [
+        { id: '1', channel: 'whatsapp', delayDays: 0, prompt: '简短打招呼问候，发送一张产品图片建立印象。' },
+        { id: '2', channel: 'whatsapp', delayDays: 3, prompt: '询问是否有空安排一个快速语音通话。' }
+      ] 
+    }
   ];
 
   const prefs = typeof user?.preferences === 'string' ? JSON.parse(user.preferences) : (user?.preferences || {});
-  const workflows = prefs.aiWorkflows || defaultWorkflows;
+  const rawWorkflows = prefs.aiWorkflows || defaultWorkflows;
+  const workflows = rawWorkflows.map((rw: any) => {
+    if (!rw.steps || rw.steps.length === 0) {
+      const dw = defaultWorkflows.find(d => d.id === rw.id);
+      if (dw && dw.steps) {
+        return { ...rw, steps: dw.steps };
+      }
+    }
+    return rw;
+  });
 
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>('custom');
   
   const [prompt, setPrompt] = useState('');
-  const [maxSteps, setMaxSteps] = useState(3);
-  const [intervalDays, setIntervalDays] = useState(3);
   const [contactChannel, setContactChannel] = useState('email');
+  const [steps, setSteps] = useState<{id: string, channel: string, delayDays: number, prompt: string}[]>([]);
   const [loading, setLoading] = useState(false);
 
   React.useEffect(() => {
     if (customer.ai_agent_status === 'active' && customer.ai_agent_workflow) {
       let wf = typeof customer.ai_agent_workflow === 'string' ? JSON.parse(customer.ai_agent_workflow) : customer.ai_agent_workflow;
       setPrompt(wf.prompt || '');
-      setMaxSteps(wf.max_steps || 3);
-      setIntervalDays(wf.interval_days || 3);
       setContactChannel(wf.channel || 'email');
+      if (wf.steps && wf.steps.length > 0) {
+        setSteps(wf.steps);
+      } else {
+        setSteps(Array.from({ length: wf.max_steps || 3 }).map((_, i) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          channel: wf.channel || 'email',
+          delayDays: i === 0 ? 0 : (wf.interval_days || 3),
+          prompt: i === 0 ? '起草并发送首封破冰/跟进消息' : '如未收到回复，尝试尝试不同角度继续跟进'
+        })));
+      }
     } else if (workflows.length > 0) {
       setSelectedWorkflowId(workflows[0].id);
       setPrompt(workflows[0].prompt);
-      setMaxSteps(workflows[0].maxSteps);
-      setIntervalDays(workflows[0].intervalDays);
       setContactChannel('email');
+      if (workflows[0].steps && workflows[0].steps.length > 0) {
+        setSteps(workflows[0].steps);
+      } else {
+        setSteps(Array.from({ length: workflows[0].maxSteps || 3 }).map((_, i) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          channel: workflows[0].channel || 'email',
+          delayDays: i === 0 ? 0 : (workflows[0].intervalDays || 3),
+          prompt: i === 0 ? '起草并发送首封破冰/跟进消息' : '如未收到回复，尝试尝试不同角度继续跟进'
+        })));
+      }
     }
   }, [customer.id]);
 
@@ -48,9 +99,17 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
       const w = workflows.find((x: any) => x.id === wId);
       if (w) {
         setPrompt(w.prompt);
-        setMaxSteps(w.maxSteps);
-        setIntervalDays(w.intervalDays);
         setContactChannel(w.channel || 'email');
+        if (w.steps && w.steps.length > 0) {
+          setSteps(w.steps);
+        } else {
+          setSteps(Array.from({ length: w.maxSteps || 3 }).map((_, i) => ({
+            id: Math.random().toString(36).substr(2, 9),
+            channel: w.channel || 'email',
+            delayDays: i === 0 ? 0 : (w.intervalDays || 3),
+            prompt: i === 0 ? '起草并发送首封破冰/跟进消息' : '如未收到回复，尝试不同角度继续跟进'
+          })));
+        }
       }
     } else if (wId === 'manage') {
       setManageMode(true);
@@ -88,7 +147,7 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          workflow: { prompt, max_steps: maxSteps, interval_days: intervalDays, current_step: 0, channel: contactChannel }
+          workflow: { prompt, current_step: 0, channel: contactChannel, steps }
         })
       });
       if (res.ok) {
@@ -142,7 +201,7 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-bold text-slate-800">管理工作流预设</h3>
-                {editFlow === null && <button onClick={() => setEditFlow({ name: '', channel: 'email', prompt: '', maxSteps: 3, intervalDays: 3 })} className="text-blue-600 text-sm font-medium hover:underline">+ 新增预设</button>}
+                {editFlow === null && <button onClick={() => setEditFlow({ name: '', channel: 'email', prompt: '', steps: [{ id: Math.random().toString(36).substr(2, 9), channel: 'email', delayDays: 0, prompt: '起草并发送消息' }] })} className="text-blue-600 text-sm font-medium hover:underline">+ 新增预设</button>}
               </div>
               
               {editFlow ? (
@@ -161,18 +220,82 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">跟进目标 / 设定</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">跟进目标 / 设定 (整体概念)</label>
                     <textarea rows={2} value={editFlow.prompt} onChange={e => setEditFlow({...editFlow, prompt: e.target.value})} className="w-full text-sm border-slate-300 rounded p-1.5 focus:ring-1 focus:ring-blue-500" />
                   </div>
-                  <div className="flex gap-4">
-                    <div className="w-1/2">
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">最大跟进次数</label>
-                      <input type="number" value={editFlow.maxSteps} onChange={e => setEditFlow({...editFlow, maxSteps: parseInt(e.target.value) || 3})} className="w-full text-sm border-slate-300 rounded p-1.5" />
+                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-slate-700">预设跟进步骤</label>
+                      <button 
+                        onClick={() => {
+                          const newSteps = [...(editFlow.steps || [])];
+                          newSteps.push({ id: Math.random().toString(36).substr(2, 9), channel: editFlow.channel || 'email', delayDays: 3, prompt: '生成下一步跟进话术' });
+                          setEditFlow({...editFlow, steps: newSteps});
+                        }}
+                        className="text-[10px] text-blue-600 font-medium hover:underline flex items-center gap-1"
+                      >
+                        + 新增预设步骤
+                      </button>
                     </div>
-                    <div className="w-1/2">
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">跟进间隔 (天)</label>
-                      <input type="number" value={editFlow.intervalDays} onChange={e => setEditFlow({...editFlow, intervalDays: parseInt(e.target.value) || 3})} className="w-full text-sm border-slate-300 rounded p-1.5" />
-                    </div>
+                    {(editFlow.steps || []).map((step: any, index: number) => (
+                      <div key={step.id || index} className="p-3 bg-white border border-slate-200 rounded-lg text-xs space-y-2 relative group shadow-sm">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] font-bold text-slate-600 bg-slate-100 flex items-center justify-center w-5 h-5 rounded-full">{index + 1}</div>
+                          {index > 0 && (
+                            <button onClick={() => {
+                              const newSteps = [...editFlow.steps];
+                              newSteps.splice(index, 1);
+                              setEditFlow({...editFlow, steps: newSteps});
+                            }} className="text-[10px] text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">删除</button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-semibold text-slate-500 mb-1">联系渠道</label>
+                            <select 
+                              value={step.channel}
+                              onChange={e => {
+                                const newSteps = [...editFlow.steps];
+                                newSteps[index].channel = e.target.value;
+                                setEditFlow({...editFlow, steps: newSteps});
+                              }}
+                              className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-1"
+                            >
+                              <option value="email">邮件</option>
+                              <option value="whatsapp">WhatsApp</option>
+                              <option value="linkedin">LinkedIn</option>
+                              <option value="other">其他</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold text-slate-500 mb-1">跟进间隔 (天)</label>
+                            <input 
+                              type="number" min="0" disabled={index === 0}
+                              value={step.delayDays}
+                              onChange={e => {
+                                const newSteps = [...editFlow.steps];
+                                newSteps[index].delayDays = parseInt(e.target.value) || 0;
+                                setEditFlow({...editFlow, steps: newSteps});
+                              }}
+                              className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-1 disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">内容提示词</label>
+                          <textarea 
+                            rows={1}
+                            value={step.prompt}
+                            onChange={e => {
+                              const newSteps = [...editFlow.steps];
+                              newSteps[index].prompt = e.target.value;
+                              setEditFlow({...editFlow, steps: newSteps});
+                            }}
+                            className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-1"
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                   <div className="flex justify-end gap-2 pt-2">
                     <button onClick={() => setEditFlow(null)} className="text-xs text-slate-500 hover:text-slate-800 px-3 py-1">取消</button>
@@ -193,7 +316,7 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
                         <div className="text-xs text-slate-500 truncate">{w.prompt}</div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => setEditFlow(w)} className="text-xs text-blue-600 hover:underline">编辑</button>
+                        <button onClick={() => setEditFlow(w.steps ? w : { ...w, steps: Array.from({ length: w.maxSteps || 3 }).map((_, i) => ({ id: Math.random().toString(36).substr(2, 9), channel: w.channel || 'email', delayDays: i === 0 ? 0 : (w.intervalDays || 3), prompt: i === 0 ? w.prompt : '如未收到回复，准备继续跟进' })) })} className="text-xs text-blue-600 hover:underline">编辑</button>
                         <button onClick={() => deleteFlow(w.id)} className="text-xs text-red-600 hover:underline">删除</button>
                       </div>
                     </div>
@@ -210,20 +333,23 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
                 <div className="whitespace-pre-wrap">{prompt}</div>
               </div>
               <div className="space-y-3 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
-                {Array.from({ length: maxSteps }).map((_, i) => (
+                {steps.map((step, i) => (
                   <div key={i} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
                     <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-100 group-[.is-active]:bg-blue-500 text-slate-500 group-[.is-active]:text-blue-50 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
                       {i + 1}
                     </div>
                     <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                       <div className="flex items-center justify-between space-x-2 mb-1">
-                        <div className="font-bold text-slate-800 text-sm">{i === 0 ? '第一步：破冰/初次跟进' : `第 ${i + 1} 步：进一步跟进`}</div>
-                        <time className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{i === 0 ? '立即执行' : `等待 ${i * intervalDays} 天`}</time>
+                        <div className="font-bold text-slate-800 text-sm">
+                          {i === 0 ? '第一步：破冰/初次跟进' : `第 ${i + 1} 步：跟进`}
+                          <span className="ml-2 text-[10px] font-normal px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                            {step.channel === 'whatsapp' ? 'WhatsApp' : step.channel === 'linkedin' ? 'LinkedIn' : step.channel === 'other' ? '其他' : '邮件'}
+                          </span>
+                        </div>
+                        <time className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{i === 0 ? '立即执行' : `等待 ${step.delayDays} 天`}</time>
                       </div>
                       <div className="text-slate-500 text-xs">
-                        {i === 0 
-                          ? (contactChannel === 'email' ? 'AI将分析客户资料与设定目标，起草并自动发送首封邮件。' : `AI将分析客户资料与设定目标，生成 ${contactChannel} 的跟进话术，等待您手动发送。`)
-                          : (contactChannel === 'email' ? '如未收到回复，AI将总结之前的沟通，尝试不同角度继续自动发送跟进邮件。' : `如未收到进展，AI将生成下一步跟进话术，再次提醒您进行手动沟通。`)}
+                        {step.prompt}
                       </div>
                     </div>
                   </div>
@@ -290,27 +416,61 @@ export function AiAgentModal({ customer, user, updatePreference, onClose, onUpda
                     placeholder="例如：介绍我们的服务并试图约一个15分钟的演示..."
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">最大跟进次数</label>
-                    <input 
-                      type="number" 
-                      min="1" max="10"
-                      className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2"
-                      value={maxSteps}
-                      onChange={e => setMaxSteps(parseInt(e.target.value) || 3)}
-                    />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-semibold text-slate-700">配置跟进步骤</label>
+                    <button 
+                      onClick={() => setSteps([...steps, { id: Math.random().toString(36).substr(2, 9), channel: contactChannel, delayDays: 3, prompt: '生成下一步跟进话术' }])}
+                      className="text-xs text-blue-600 font-medium hover:underline flex items-center gap-1"
+                    >
+                      + 新增步骤
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">跟进间隔 (天)</label>
-                    <input 
-                      type="number" 
-                      min="1" max="30"
-                      className="w-full text-sm bg-slate-50 border border-slate-200 rounded p-2"
-                      value={intervalDays}
-                      onChange={e => setIntervalDays(parseInt(e.target.value) || 3)}
-                    />
-                  </div>
+                  {steps.map((step, index) => (
+                    <div key={step.id} className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-3 relative group">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-bold text-slate-700 bg-slate-200 px-2 py-0.5 rounded">第 {index + 1} 步</div>
+                        {index > 0 && (
+                          <button onClick={() => setSteps(steps.filter((_, i) => i !== index))} className="text-xs text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">删除</button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">联系方式</label>
+                          <select 
+                            value={step.channel}
+                            onChange={e => setSteps(steps.map((s, i) => i === index ? { ...s, channel: e.target.value } : s))}
+                            className="w-full text-xs bg-white border border-slate-200 rounded p-1.5"
+                          >
+                            <option value="email">邮件 (全自动代发)</option>
+                            <option value="whatsapp">WhatsApp (需人工发送)</option>
+                            <option value="linkedin">LinkedIn (需人工发送)</option>
+                            <option value="other">其他 (需人工发送)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">跟进间隔 (天)</label>
+                          <input 
+                            type="number" 
+                            min="0"
+                            disabled={index === 0}
+                            value={step.delayDays}
+                            onChange={e => setSteps(steps.map((s, i) => i === index ? { ...s, delayDays: parseInt(e.target.value) || 0 } : s))}
+                            className="w-full text-xs bg-white border border-slate-200 rounded p-1.5 disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-500 mb-1">具体提示设定</label>
+                        <textarea 
+                          rows={2}
+                          value={step.prompt}
+                          onChange={e => setSteps(steps.map((s, i) => i === index ? { ...s, prompt: e.target.value } : s))}
+                          className="w-full text-xs bg-white border border-slate-200 rounded p-1.5"
+                        />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>
