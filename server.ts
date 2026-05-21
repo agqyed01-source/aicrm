@@ -178,6 +178,7 @@ async function initDB() {
         subject VARCHAR(1024),
         body_text TEXT,
         body_html TEXT,
+        is_read BOOLEAN DEFAULT FALSE,
         sent_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -1088,10 +1089,25 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/db/emails/:id/read", authenticateToken, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { rows } = await pool!.query(
+        "UPDATE emails SET is_read = TRUE WHERE id = $1 AND account_id IN (SELECT id FROM email_accounts WHERE user_id = $2) RETURNING *",
+        [id, req.user.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Email not found" });
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/db/emails/sync", authenticateToken, async (req: any, res) => {
     try {
       const { rows: accounts } = await pool!.query("SELECT * FROM email_accounts WHERE user_id = $1 AND provider = 'imap'", [req.user.id]);
       let syncedCount = 0;
+      let debugInfo: any[] = [];
 
       for (const account of accounts) {
         let creds;
@@ -1101,12 +1117,16 @@ async function startServer() {
           continue;
         }
         
-        if (!creds.host || !creds.user || !creds.password) continue;
+        const pass = creds.pass || creds.password;
+        if (!creds.host || !creds.user || !pass) {
+          debugInfo.push({ accountId: account.id, error: "Missing imap configuration fields" });
+          continue;
+        }
         
         const config = {
           imap: {
             user: creds.user,
-            password: creds.password,
+            password: creds.pass || creds.password,
             host: creds.host,
             port: creds.port || 993,
             tls: creds.tls !== false,
@@ -1120,48 +1140,74 @@ async function startServer() {
           const connection = await imaps.connect(config);
           await connection.openBox('INBOX');
 
-          const delay = 10 * 24 * 3600 * 1000;
-          const searchCriteria = [
-            ['SINCE', new Date(Date.now() - delay).toISOString()]
-          ];
-          const fetchOptions = {
-            bodies: ['HEADER', 'TEXT', ''],
-            struct: true,
-            markSeen: false
-          };
-
-          const messages = await connection.search(searchCriteria, fetchOptions);
+          // Get all message UIDs without bodies to avoid memory issues
+          const allMessages = await connection.search(['ALL'], { bodies: ['HEADER.FIELDS (DATE)'], struct: false });
+          // Get the last 100 messages
+          const latestMessages = allMessages.slice(-100);
+          const uids = latestMessages.map((m: any) => m.attributes.uid);
+          
+          let messages: any[] = [];
+          if (uids.length > 0) {
+            messages = await connection.search([['UID', uids.join(',')]], {
+              bodies: [''],
+              struct: false,
+              markSeen: false
+            });
+          }
+          let skipped = 0;
 
           for (const item of messages) {
-            const all = item.parts.find((part) => part.which === '');
-            if (!all || !all.body) continue;
+            // Find the part that has the body.
+            // When requesting `bodies: ['']`, the part which is '' or '1'.
+            let bodyPart = item.parts.find((part: any) => part.which === '');
+            if (!bodyPart) bodyPart = item.parts.find((part: any) => part.body);
+            
+            if (!bodyPart || !bodyPart.body) {
+              skipped++;
+              continue;
+            }
+            const all = bodyPart;
             const id = item.attributes.uid;
 
             const parsed = await simpleParser(all.body);
             
             const subject = parsed.subject || '';
-            const text = parsed.text || parsed.html || '';
+            const text = parsed.text || '';
+            const html = parsed.html || '';
             const threadId = parsed.messageId || String(id);
             const fromAdd = (parsed.from?.value as any)?.[0]?.address || '';
             const toObj = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
             const toAdd = (toObj?.value as any)?.[0]?.address || '';
             
-            const existing = await pool!.query("SELECT id FROM emails WHERE account_id = $1 AND thread_id = $2", [account.id, threadId]);
+            const existing = await pool!.query("SELECT id, body_html FROM emails WHERE account_id = $1 AND thread_id = $2", [account.id, threadId]);
             if (existing.rows.length === 0) {
               await pool!.query(
-                "INSERT INTO emails (account_id, direction, thread_id, from_address, to_address, subject, body_text, sent_at, created_at) VALUES ($1, 'inbound', $2, $3, $4, $5, $6, $7, NOW())",
-                [account.id, threadId, fromAdd, toAdd, subject, text, parsed.date || new Date()]
+                "INSERT INTO emails (account_id, direction, thread_id, from_address, to_address, subject, body_text, body_html, sent_at, created_at) VALUES ($1, 'inbound', $2, $3, $4, $5, $6, $7, $8, NOW())",
+                [account.id, threadId, fromAdd, toAdd, subject, text, html, parsed.date || new Date()]
               );
               syncedCount++;
+            } else if (!existing.rows[0].body_html && html) {
+              await pool!.query(
+                "UPDATE emails SET body_html = $1, body_text = $2 WHERE id = $3",
+                [html, text, existing.rows[0].id]
+              );
             }
           }
           connection.end();
+          debugInfo.push({
+            accountId: account.id,
+            allMessagesCount: allMessages.length,
+            requestedUidsLength: uids.length,
+            messagesFetched: messages.length,
+            skipped
+          });
         } catch (err: any) {
           console.error("IMAP sync failed for account " + account.id, err);
+          debugInfo.push({ accountId: account.id, error: err.message });
         }
       }
 
-      res.json({ success: true, syncedCount });
+      res.json({ success: true, syncedCount, debugInfo });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1174,6 +1220,33 @@ async function startServer() {
       if (accountRows.length === 0) return res.status(401).json({ error: "Unauthorized account" });
       const account = accountRows[0];
       
+      if (direction === 'outbound') {
+        let creds;
+        try {
+          creds = typeof account.credential_data === 'string' ? JSON.parse(account.credential_data) : account.credential_data;
+        } catch (e) {
+          return res.status(400).json({ error: "Invalid credential data for account" });
+        }
+        
+        if (!creds.host || !creds.user || !(creds.pass || creds.password)) {
+          return res.status(400).json({ error: "Account missing required credentials (host, user, pass)" });
+        }
+
+        const transporter = nodemailer.createTransport({
+          host: creds.host,
+          port: parseInt(creds.port, 10),
+          secure: parseInt(creds.port, 10) === 465,
+          auth: { user: creds.user, pass: creds.pass || creds.password }
+        });
+
+        await transporter.sendMail({
+          from: `"${account.from_name}" <${account.from_email}>`,
+          to: to_address,
+          subject: subject,
+          text: body_text
+        });
+      }
+
       const { rows } = await pool!.query(
         "INSERT INTO emails (account_id, customer_id, direction, thread_id, from_address, to_address, subject, body_text, sent_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *",
         [account_id, customer_id, direction, thread_id, account.from_email, to_address, subject, body_text]
@@ -1181,7 +1254,16 @@ async function startServer() {
       
       res.json(rows[0]);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      console.error("Failed to send email:", e);
+      let errorMsg = e.message;
+      if (errorMsg && errorMsg.includes('Invalid login')) {
+        errorMsg = '发件账号登录失败，请检查账号密码或授权码是否正确。';
+      } else if (errorMsg && errorMsg.includes('ETIMEDOUT')) {
+        errorMsg = '连接邮箱服务器超时，请检查服务器地址和端口配置。';
+      } else if (errorMsg && errorMsg.includes('ECONNREFUSED')) {
+        errorMsg = '邮箱服务器拒绝连接，请检查SSL/端口配置。';
+      }
+      res.status(500).json({ error: errorMsg });
     }
   });
 

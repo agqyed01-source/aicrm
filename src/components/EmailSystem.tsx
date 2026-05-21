@@ -20,6 +20,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
   const [composeAccount, setComposeAccount] = useState('');
+  const [composeError, setComposeError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
   
@@ -36,19 +37,55 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{success: boolean, message: string} | null>(null);
+  const [syncResult, setSyncResult] = useState<{success: boolean, message: string} | null>(null);
   const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
 
+  const handleSelectEmail = async (mail: any) => {
+    setSelectedEmail(mail);
+    if (!mail.is_read) {
+      setEmails(emails.map(e => e.id === mail.id ? { ...e, is_read: true } : e));
+      try {
+        await apiFetch(`/api/db/emails/${mail.id}/read`, { method: 'PATCH' });
+      } catch (e) {
+        console.error('Failed to mark as read', e);
+      }
+    }
+  };
+
+  const handleReplyEmail = () => {
+    if (!selectedEmail) return;
+    setComposeTo(selectedEmail.direction === 'outbound' ? selectedEmail.to_address : selectedEmail.from_address);
+    setComposeSubject(selectedEmail.subject?.toLowerCase().startsWith('re:') ? selectedEmail.subject : `Re: ${selectedEmail.subject || ''}`);
+    setComposeBody(`\n\n------------------\n在 ${new Date(selectedEmail.sent_at || selectedEmail.created_at).toLocaleString()}，${selectedEmail.from_address} 写道：\n${selectedEmail.body_text || '(无正文文本)'}`);
+    setComposeAccount(selectedEmail.account_id ? selectedEmail.account_id.toString() : (accounts[0]?.id.toString() || ''));
+    setShowCompose(true);
+  };
+
   const syncEmails = async () => {
     setIsSyncing(true);
+    setSyncResult(null);
     try {
-      await apiFetch('/api/db/emails/sync', { method: 'POST' });
+      const res = await apiFetch('/api/db/emails/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.syncedCount !== undefined) {
+           if (data.syncedCount === 0) {
+             setSyncResult({ success: true, message: `同步完成，没有新的邮件。${data.debugInfo ? JSON.stringify(data.debugInfo) : ''}` });
+           } else {
+             setSyncResult({ success: true, message: `同步完成，共获取到 ${data.syncedCount} 封新邮件。${data.debugInfo ? JSON.stringify(data.debugInfo) : ''}` });
+           }
+        }
+      } else {
+        setSyncResult({ success: false, message: data.error || '同步失败，请检查网络和账号配置' });
+      }
       await loadData();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('同步失败');
+      setSyncResult({ success: false, message: '同步过程出现错误: ' + (e.message || '未知错误') });
     } finally {
       setIsSyncing(false);
+      setTimeout(() => setSyncResult(null), 8000);
     }
   };
 
@@ -226,7 +263,11 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
   };
 
   const handleSend = async () => {
-    if (!composeTo || !composeAccount || !composeSubject) return alert('必填项不完整');
+    setComposeError('');
+    if (!composeTo || !composeAccount || !composeSubject) {
+      setComposeError('必填项不完整');
+      return;
+    }
     setSending(true);
     try {
       const custRes = await apiFetch(`/api/db/customers?pool=private`);
@@ -255,12 +296,14 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
         setComposeTo('');
         setComposeSubject('');
         setComposeBody('');
+        setComposeError('');
       } else {
         const err = await r.json();
-        alert(err.error || '发送失败');
+        setComposeError(err.error || '发送失败');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setComposeError(e.message || '发送失败');
     } finally {
       setSending(false);
     }
@@ -268,7 +311,9 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
 
   const displayedEmails = view === 'sent' 
     ? emails.filter(e => e.direction === 'outbound')
-    : emails; // For inbox, show all for now
+    : view === 'inbox'
+    ? emails.filter(e => e.direction === 'inbound')
+    : emails;
 
   return (
     <div className="flex-1 flex h-full bg-slate-50 overflow-hidden text-slate-800 relative">
@@ -334,7 +379,10 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
               </button>
               <div className="flex items-center gap-1 border-l border-slate-200 pl-4">
                 <button className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 border border-transparent hover:border-slate-200"><Trash2 className="w-4 h-4" /></button>
-                <button className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 border border-transparent hover:border-slate-200"><Mail className="w-4 h-4" /></button>
+                <button onClick={handleReplyEmail} title="回复邮件" className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 border border-transparent hover:border-slate-200 flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
+                  <span className="text-sm">回复</span>
+                </button>
                 <button className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 border border-transparent hover:border-slate-200"><MoreVertical className="w-4 h-4" /></button>
               </div>
             </div>
@@ -352,6 +400,11 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                   <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
                   {isSyncing ? '同步中...' : '同步收件'}
                 </button>
+                {syncResult && (
+                  <span className={`text-xs px-2 py-1 rounded-md ${syncResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    {syncResult.message}
+                  </span>
+                )}
                 <button className="p-1.5 hover:bg-slate-100 rounded-md text-slate-500 border border-transparent hover:border-slate-200 ml-2">
                   <MoreVertical className="w-4 h-4" />
                 </button>
@@ -566,8 +619,19 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                 </div>
               </div>
               
-              <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                {selectedEmail.body_text}
+              <div className="w-full bg-white rounded-md overflow-hidden email-content-container">
+                {(selectedEmail.body_html || (selectedEmail.body_text && /<\s*(html|body|div|p|br|table|span|a|strong|em|img|h[1-6])/i.test(selectedEmail.body_text))) ? (
+                  <iframe 
+                    srcDoc={selectedEmail.body_html || selectedEmail.body_text} 
+                    className="w-full min-h-[600px] border-none"
+                    title="email-content"
+                    sandbox="allow-same-origin allow-popups"
+                  />
+                ) : (
+                  <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed px-4 py-2">
+                    {selectedEmail.body_text || '(无正文)'}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -595,10 +659,10 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                   {displayedEmails.map((mail) => (
                     <div 
                       key={mail.id} 
-                      onClick={() => setSelectedEmail(mail)}
-                      className="flex items-center gap-4 px-6 py-3 hover:bg-blue-50/50 cursor-pointer transition-colors group"
+                      onClick={() => handleSelectEmail(mail)}
+                      className={`flex items-center gap-4 px-6 py-3 cursor-pointer transition-colors group ${mail.is_read ? 'hover:bg-slate-50' : 'bg-blue-50/30 hover:bg-blue-50/50'}`}
                     >
-                      <div className="w-48 shrink-0 font-semibold text-sm text-slate-800 truncate">
+                      <div className={`w-48 shrink-0 text-sm text-slate-800 truncate ${mail.is_read ? 'font-medium' : 'font-bold'}`}>
                         {mail.direction === 'outbound' ? `To: ${mail.to_address}` : mail.from_address}
                       </div>
                       
@@ -608,7 +672,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                             已关联
                           </span>
                         )}
-                        <span className="font-semibold text-sm text-slate-800 shrink-0">{mail.subject || '(无主题)'}</span>
+                        <span className={`text-sm text-slate-800 shrink-0 ${mail.is_read ? 'font-medium' : 'font-bold'}`}>{mail.subject || '(无主题)'}</span>
                         <span className="text-slate-300 text-sm shrink-0">-</span>
                         <span className="text-sm text-slate-500 truncate">{mail.body_text?.replace(/\n/g, ' ')}</span>
                       </div>
@@ -682,13 +746,19 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
             </div>
           </div>
           
-          <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={handleSend}
-                disabled={sending}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded shadow-sm transition-colors disabled:opacity-70 flex items-center gap-2"
-              >
+          <div className="px-5 py-3 border-t border-slate-100 flex flex-col gap-3 bg-slate-50 shrink-0">
+            {composeError && (
+              <div className="text-sm text-red-600 bg-red-50 p-2 rounded border border-red-100 mb-1">
+                {composeError}
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={handleSend}
+                  disabled={sending}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded shadow-sm transition-colors disabled:opacity-70 flex items-center gap-2"
+                >
                 {sending ? '发送中...' : '发送邮件'}
               </button>
               
@@ -713,6 +783,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
             >
               <Trash2 className="w-4 h-4" />
             </button>
+            </div>
           </div>
         </div>
       )}
