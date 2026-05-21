@@ -973,7 +973,9 @@ async function startServer() {
             host,
             port: parseInt(port, 10),
             tls: parseInt(port, 10) === 993,
-            tlsOptions: { rejectUnauthorized: false }
+            tlsOptions: { rejectUnauthorized: false },
+            authTimeout: 10000,
+            connTimeout: 10000
           }
         };
         const connection = await imaps.connect(config);
@@ -1010,7 +1012,7 @@ async function startServer() {
         errMsg = "用户名或密码错误，请检查您的凭证。";
       } else if (errStr.includes('enotfound')) {
         errMsg = "无法解析服务器地址，请检查主机名是否正确。";
-      } else if (errStr.includes('etimedout')) {
+      } else if (errStr.includes('etimedout') || errStr.includes('timeout')) {
         errMsg = "连接超时，请检查服务器地址和端口，或当前网络是否畅通。";
       } else if (errStr.includes('econnrefused')) {
         errMsg = "连接被拒绝，请检查端口号是否正确，以及服务器是否允许连接。";
@@ -1108,7 +1110,9 @@ async function startServer() {
             host: creds.host,
             port: creds.port || 993,
             tls: creds.tls !== false,
-            authTimeout: 5000
+            tlsOptions: { rejectUnauthorized: false },
+            authTimeout: 10000,
+            connTimeout: 10000
           }
         };
 
