@@ -35,6 +35,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{success: boolean, message: string} | null>(null);
   const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
 
@@ -78,6 +79,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
 
   const handleTestConnection = async () => {
     setTestingConnection(true);
+    setTestResult(null);
     try {
       let cred = {};
       if (newAccount.provider === 'resend' || newAccount.provider === 'outscraper') {
@@ -93,12 +95,12 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        alert(data.message || '连接测试成功！');
+        setTestResult({ success: true, message: data.message || '连接测试成功！' });
       } else {
-        alert(data.error || '测试失败');
+        setTestResult({ success: false, message: data.error || '测试失败' });
       }
     } catch (e: any) {
-      alert('测试过程中出现错误：' + e.message);
+      setTestResult({ success: false, message: '测试过程中出现错误：' + e.message });
     } finally {
       setTestingConnection(false);
     }
@@ -480,6 +482,11 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                       )}
                     </div>
                   </div>
+                  {testResult && (
+                    <div className={`mt-4 p-3 rounded text-sm ${testResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                      {testResult.message}
+                    </div>
+                  )}
                   <div className="mt-6 flex gap-3">
                     <button 
                       onClick={handleTestConnection}

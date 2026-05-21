@@ -339,7 +339,7 @@ async function startServer() {
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (err) return res.status(403).json({ error: "Forbidden" });
+      if (err) return res.status(401).json({ error: "Forbidden" });
       req.user = user;
       next();
     });
@@ -347,7 +347,7 @@ async function startServer() {
 
   const requireSuperAdmin = (req: any, res: any, next: any) => {
     if (req.user?.role !== 'super_admin') {
-      return res.status(403).json({ error: "Requires super admin privileges" });
+      return res.status(401).json({ error: "Requires super admin privileges" });
     }
     next();
   };
@@ -384,7 +384,7 @@ async function startServer() {
       if (!valid) return res.status(401).json({ error: "Invalid credentials" });
       
       if (user.status !== 'approved') {
-        return res.status(403).json({ error: `Account is ${user.status}. Please wait for admin approval.` });
+        return res.status(401).json({ error: `Account is ${user.status}. Please wait for admin approval.` });
       }
 
       const token = jwt.sign({ id: user.id, name: user.name, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
@@ -398,7 +398,7 @@ async function startServer() {
     try {
       const { rows } = await pool!.query("SELECT id, name, email, role, status, preferences FROM users WHERE id = $1", [req.user.id]);
       if (rows.length === 0) return res.status(404).json({ error: "User not found" });
-      if (rows[0].status !== 'approved') return res.status(403).json({ error: "Account no longer approved" });
+      if (rows[0].status !== 'approved') return res.status(401).json({ error: "Account no longer approved" });
       res.json(rows[0]);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -590,7 +590,7 @@ async function startServer() {
         const releasedTime = new Date(cust.released_at).getTime();
         const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
         if (releasedTime > sevenDaysAgo) {
-          return res.status(403).json({ error: "原认领人7天内不可重新认领该客户" });
+          return res.status(400).json({ error: "原认领人7天内不可重新认领该客户" });
         }
       }
 
@@ -707,7 +707,7 @@ async function startServer() {
         "UPDATE customers SET ai_agent_status = 'active', ai_agent_workflow = $1, ai_agent_next_run = NOW() WHERE id = $2 AND owner_id = $3", 
         [JSON.stringify(workflow), req.params.id, req.user.id]
       );
-      if (rowCount === 0) return res.status(403).json({ error: "Not authorized or customer not found" });
+      if (rowCount === 0) return res.status(401).json({ error: "Not authorized or customer not found" });
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -721,7 +721,7 @@ async function startServer() {
         "UPDATE customers SET ai_agent_status = 'paused', ai_agent_next_run = NULL WHERE id = $1 AND owner_id = $2", 
         [req.params.id, req.user.id]
       );
-      if (rowCount === 0) return res.status(403).json({ error: "Not authorized or customer not found" });
+      if (rowCount === 0) return res.status(401).json({ error: "Not authorized or customer not found" });
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -987,13 +987,40 @@ async function startServer() {
         if (r.status === 200) {
           return res.json({ success: true, message: "Resend API connection successful." });
         } else {
-          return res.status(400).json({ error: "Invalid Resend API token" });
+          return res.status(400).json({ error: "Resend API token 解析失败，请检查是否正确" });
+        }
+      } else if (provider === 'outscraper') {
+        const { api_key } = credential_data;
+        const r = await axios.get('https://api.app.outscraper.com/profile', {
+          headers: { 'X-API-KEY': api_key }
+        });
+        if (r.status === 200) {
+          return res.json({ success: true, message: "Outscraper API connection successful." });
+        } else {
+          return res.status(400).json({ error: "Outscraper API token 无效或被拒绝" });
         }
       }
       return res.status(400).json({ error: "Unknown provider or missing credentials" });
     } catch (e: any) {
       console.error("Test connection failed:", e);
-      return res.status(500).json({ error: e.message || "Failed to connect" });
+      let errMsg = e.message || "Failed to connect";
+      
+      const errStr = String(errMsg).toLowerCase();
+      if (errStr.includes('invalid login') || e.code === 'EAUTH') {
+        errMsg = "用户名或密码错误，请检查您的凭证。";
+      } else if (errStr.includes('enotfound')) {
+        errMsg = "无法解析服务器地址，请检查主机名是否正确。";
+      } else if (errStr.includes('etimedout')) {
+        errMsg = "连接超时，请检查服务器地址和端口，或当前网络是否畅通。";
+      } else if (errStr.includes('econnrefused')) {
+        errMsg = "连接被拒绝，请检查端口号是否正确，以及服务器是否允许连接。";
+      } else if (errStr.includes('self signed certificate')) {
+        errMsg = "证书验证失败。如果使用的是自签名证书，请确认您的服务器配置。";
+      } else if (e.response?.status === 401 || errStr.includes('unauthorized')) {
+        errMsg = "身份验证失败，Token可能已过期或无效。";
+      }
+      
+      return res.status(500).json({ error: errMsg });
     }
   });
 
@@ -1140,7 +1167,7 @@ async function startServer() {
     try {
       const { account_id, customer_id, direction, thread_id, to_address, subject, body_text } = req.body;
       const { rows: accountRows } = await pool!.query("SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2", [account_id, req.user.id]);
-      if (accountRows.length === 0) return res.status(403).json({ error: "Unauthorized account" });
+      if (accountRows.length === 0) return res.status(401).json({ error: "Unauthorized account" });
       const account = accountRows[0];
       
       const { rows } = await pool!.query(
