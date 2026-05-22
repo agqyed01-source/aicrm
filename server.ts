@@ -1148,7 +1148,7 @@ async function startServer() {
           
           let messages: any[] = [];
           if (uids.length > 0) {
-            messages = await connection.search([['UID', uids.join(',')]], {
+            messages = await connection.search([['UID', ...uids]], {
               bodies: [''],
               struct: false,
               markSeen: false

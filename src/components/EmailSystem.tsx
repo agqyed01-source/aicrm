@@ -19,6 +19,9 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
   const [composeTo, setComposeTo] = useState('');
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
+  const [quoteText, setQuoteText] = useState('');
+  const [showAiPrompt, setShowAiPrompt] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const [composeAccount, setComposeAccount] = useState('');
   const [composeError, setComposeError] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -57,7 +60,8 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
     if (!selectedEmail) return;
     setComposeTo(selectedEmail.direction === 'outbound' ? selectedEmail.to_address : selectedEmail.from_address);
     setComposeSubject(selectedEmail.subject?.toLowerCase().startsWith('re:') ? selectedEmail.subject : `Re: ${selectedEmail.subject || ''}`);
-    setComposeBody(`\n\n------------------\n在 ${new Date(selectedEmail.sent_at || selectedEmail.created_at).toLocaleString()}，${selectedEmail.from_address} 写道：\n${selectedEmail.body_text || '(无正文文本)'}`);
+    setComposeBody('');
+    setQuoteText(`\n\n------------------\n在 ${new Date(selectedEmail.sent_at || selectedEmail.created_at).toLocaleString()}，${selectedEmail.from_address} 写道：\n${selectedEmail.body_text || '(无正文文本)'}`);
     setComposeAccount(selectedEmail.account_id ? selectedEmail.account_id.toString() : (accounts[0]?.id.toString() || ''));
     setShowCompose(true);
   };
@@ -101,7 +105,10 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
       setAccounts(accData);
       setEmails(mailData);
       if (accData.length > 0 && !composeAccount) {
-        setComposeAccount(accData[0].id.toString());
+        const smtpAccounts = accData.filter((a: any) => a.provider === 'smtp');
+        if (smtpAccounts.length > 0) {
+          setComposeAccount(smtpAccounts[0].id.toString());
+        }
       }
     } catch (e) {
       console.error(e);
@@ -244,7 +251,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: "Please draft a professional outreach email for this client.",
+          prompt: aiPrompt || "Please draft a professional outreach email for this client.",
           customer_info: matchedCustomer || { email: composeTo },
           email_history: []
         })
@@ -252,6 +259,8 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
       const data = await r.json();
       if (data.draft) {
         setComposeBody(data.draft);
+        setShowAiPrompt(false);
+        setAiPrompt('');
       } else {
         alert(data.error || '生成失败');
       }
@@ -285,7 +294,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
           direction: 'outbound',
           to_address: composeTo,
           subject: composeSubject,
-          body_text: composeBody
+          body_text: composeBody + quoteText
         })
       });
       
@@ -296,6 +305,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
         setComposeTo('');
         setComposeSubject('');
         setComposeBody('');
+        setQuoteText('');
         setComposeError('');
       } else {
         const err = await r.json();
@@ -321,7 +331,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
       {/* Sidebar */}
       <div className="w-56 flex flex-col pt-6 px-4 shrink-0 bg-white border-r border-slate-200">
         <button 
-          onClick={() => setShowCompose(true)}
+          onClick={() => { setShowCompose(true); setQuoteText(''); setComposeTo(''); setComposeSubject(''); setComposeBody(''); setShowAiPrompt(false); setAiPrompt(''); }}
           className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded shadow-sm transition-colors text-sm font-semibold w-full mb-6"
         >
           <Pencil className="w-4 h-4" />
@@ -697,7 +707,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
               <Pencil className="w-4 h-4 text-slate-400" />
               新邮件
             </h3>
-            <button onClick={() => setShowCompose(false)} className="hover:bg-slate-700 p-1 rounded transition-colors text-slate-400 hover:text-white">
+            <button onClick={() => { setShowCompose(false); setQuoteText(''); setShowAiPrompt(false); }} className="hover:bg-slate-700 p-1 rounded transition-colors text-slate-400 hover:text-white">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -711,7 +721,7 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                 onChange={e => setComposeAccount(e.target.value)}
               >
                 <option value="">-- 选择发件账号 --</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.from_name} &lt;{a.from_email}&gt;</option>)}
+                {accounts.filter(a => a.provider === 'smtp').map(a => <option key={a.id} value={a.id}>{a.from_name} &lt;{a.from_email}&gt;</option>)}
               </select>
             </div>
             
@@ -743,6 +753,11 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                 value={composeBody}
                 onChange={e => setComposeBody(e.target.value)}
               />
+              {quoteText && (
+                <div className="mt-2 text-xs text-slate-400 italic">
+                  * 原邮件内容将在发送时自动附加在正文末尾。
+                </div>
+              )}
             </div>
           </div>
           
@@ -752,38 +767,72 @@ export default function EmailSystem({ user, updatePreference }: { user: any, upd
                 {composeError}
               </div>
             )}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            
+            {showAiPrompt ? (
+              <div className="flex flex-col gap-2 p-3 bg-white rounded border border-slate-200">
+                <input 
+                  type="text"
+                  placeholder="输入提示词（例如：写一封感谢信或推销产品...）"
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                  disabled={generating}
+                  className="w-full text-sm p-2 bg-slate-50 border border-slate-200 rounded focus:outline-none focus:border-blue-500"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !generating) handleGenerateDraft();
+                  }}
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button 
+                    onClick={() => setShowAiPrompt(false)}
+                    disabled={generating}
+                    className="text-slate-500 hover:text-slate-700 text-xs px-3 py-1.5"
+                  >
+                    取消
+                  </button>
+                  <button 
+                    onClick={handleGenerateDraft}
+                    disabled={generating}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-1.5 rounded disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Wand2 className="w-3 h-3" />
+                    {generating ? '生成中...' : '开始生成'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={handleSend}
+                    disabled={sending}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded shadow-sm transition-colors disabled:opacity-70 flex items-center gap-2"
+                  >
+                  {sending ? '发送中...' : '发送邮件'}
+                </button>
+                
                 <button 
-                  onClick={handleSend}
-                  disabled={sending}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-2 rounded shadow-sm transition-colors disabled:opacity-70 flex items-center gap-2"
+                  onClick={() => setShowAiPrompt(true)}
+                  disabled={generating}
+                  className="text-blue-600 border border-blue-200 hover:bg-blue-50 font-semibold text-sm px-4 py-2 rounded shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
-                {sending ? '发送中...' : '发送邮件'}
-              </button>
+                  <Wand2 className="w-4 h-4" />
+                  AI 辅写
+                </button>
+              </div>
               
               <button 
-                onClick={handleGenerateDraft}
-                disabled={generating}
-                className="text-blue-600 border border-blue-200 hover:bg-blue-50 font-semibold text-sm px-4 py-2 rounded shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+                onClick={() => {
+                  setComposeTo('');
+                  setComposeSubject('');
+                  setComposeBody('');
+                }}
+                className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition-colors"
+                title="清空内容"
               >
-                <Wand2 className="w-4 h-4" />
-                {generating ? '生成中...' : 'AI 辅写'}
+                <Trash2 className="w-4 h-4" />
               </button>
-            </div>
-            
-            <button 
-              onClick={() => {
-                setComposeTo('');
-                setComposeSubject('');
-                setComposeBody('');
-              }}
-              className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition-colors"
-              title="清空内容"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}

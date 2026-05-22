@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Phone, AlertTriangle, ArrowUpRight, MessageSquare, Plus, Search, Map, List, Trash2, Wand2, X, UploadCloud, DownloadCloud, RefreshCw, Bot, Kanban } from 'lucide-react';
+import { Clock, Phone, AlertTriangle, ArrowUpRight, MessageSquare, Plus, Search, Map, List, Trash2, Wand2, X, UploadCloud, DownloadCloud, RefreshCw, Bot, Kanban, Mail, AlignLeft } from 'lucide-react';
 import { formatDistanceToNow, differenceInDays } from 'date-fns';
 import { apiFetch } from '../lib/api';
 import MapChart from './MapChart';
@@ -698,7 +698,10 @@ export default function PrivatePool({ user, hasOutscraper, updatePreference }: {
 function CustomerDetailView({ customerId, user, updatePreference, onInteractionLogged }: { customerId: number, user: any, updatePreference?: any, onInteractionLogged: (updatedFields?: any) => void }) {
   const [customer, setCustomer] = useState<any>(null);
   const [interactions, setInteractions] = useState<any[]>([]);
-  const [tab, setTab] = useState<'details' | 'log' | 'info'>('details');
+  const [tab, setTab] = useState<'details' | 'log' | 'info' | 'emails'>('details');
+  const [emails, setEmails] = useState<any[]>([]);
+  const [emailViewMode, setEmailViewMode] = useState<'timeline' | 'list'>('timeline');
+  const [selectedEmail, setSelectedEmail] = useState<any>(null);
   const [note, setNote] = useState('');
   const [editForm, setEditForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
@@ -719,6 +722,7 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
       setEditForm({ ...data, contact_methods: data.contact_methods || [] });
     });
     apiFetch(`/api/db/customers/${customerId}/interactions`).then(r => r.json()).then(setInteractions);
+    apiFetch(`/api/db/emails?customer_id=${customerId}`).then(r => r.json()).then(data => Array.isArray(data) ? setEmails(data) : setEmails([]));
     setTab('details');
     setNote('');
   }, [customerId]);
@@ -911,6 +915,12 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
           className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${tab === 'info' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
           客户信息
+        </button>
+        <button 
+          onClick={() => setTab('emails')}
+          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${tab === 'emails' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          邮件记录
         </button>
       </div>
 
@@ -1138,6 +1148,88 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
             </div>
           </div>
         )}
+
+        {tab === 'emails' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-slate-700">往来邮件</h4>
+              <div className="flex bg-slate-100 p-0.5 rounded-md">
+                <button 
+                  onClick={() => setEmailViewMode('timeline')}
+                  className={`p-1 rounded ${emailViewMode === 'timeline' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="时间轴视图"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setEmailViewMode('list')}
+                  className={`p-1 rounded ${emailViewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="列表视图"
+                >
+                  <AlignLeft className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {emails.length === 0 ? (
+              <div className="text-sm text-slate-500 mt-4 italic">暂无绑定的邮件记录。请在左侧邮件功能页同步收件或发件以关联客户。</div>
+            ) : emailViewMode === 'timeline' ? (
+              <div className="border-l-2 border-slate-200 ml-2 space-y-6 max-w-3xl">
+                {emails.map((e: any) => (
+                  <div key={e.id} className="relative pl-6 cursor-pointer" onClick={() => setSelectedEmail(e)}>
+                    <div className={`absolute top-1.5 -left-[5px] w-2 h-2 rounded-full border-2 border-white ${e.direction === 'inbound' ? 'bg-emerald-400' : 'bg-blue-400'}`}></div>
+                    <div className="text-xs text-slate-400 mb-1 font-medium flex items-center gap-1.5">
+                      <Mail className="w-3 h-3" />
+                      {new Date(e.sent_at || e.created_at).toLocaleString()} • <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${e.direction === 'inbound' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{e.direction === 'inbound' ? '收到' : '发出'}</span>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded p-3 hover:border-blue-300 transition-colors">
+                      <div className="font-semibold text-sm text-slate-800 mb-1">{e.subject || '(无主题)'}</div>
+                      <div className="text-xs text-slate-500 mb-2 truncate">
+                        {e.direction === 'inbound' ? `发件人: ${e.from_address}` : `收件人: ${e.to_address}`}
+                      </div>
+                      <div className="text-sm text-slate-600 line-clamp-3 text-ellipsis">
+                        {e.body_text ? e.body_text.slice(0, 200) : '(无正文或预览失败)'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="border border-slate-200 rounded-lg overflow-hidden max-w-5xl">
+                <table className="w-full text-left border-collapse bg-white text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                      <th className="p-3 w-16 text-center">方向</th>
+                      <th className="p-3 w-1/4">对方地址</th>
+                      <th className="p-3 w-2/5">主题</th>
+                      <th className="p-3 w-40">时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emails.map(e => (
+                      <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors" onClick={() => setSelectedEmail(e)}>
+                        <td className="p-3 text-center">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${e.direction === 'inbound' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                            {e.direction === 'inbound' ? '收' : '发'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-700 truncate max-w-xs" title={e.direction === 'inbound' ? e.from_address : e.to_address}>
+                          {e.direction === 'inbound' ? e.from_address : e.to_address}
+                        </td>
+                        <td className="p-3 text-slate-800 font-medium truncate max-w-md" title={e.subject}>
+                          {e.subject || '(无主题)'}
+                        </td>
+                        <td className="p-3 text-slate-500 text-xs tabular-nums">
+                          {new Date(e.sent_at || e.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {showAiModal && aiContactMethod && (
@@ -1196,6 +1288,47 @@ function CustomerDetailView({ customerId, user, updatePreference, onInteractionL
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedEmail && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden max-h-[85vh]">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-800 text-white shrink-0">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Mail className="w-4 h-4 text-blue-400" />
+                {selectedEmail.subject || '(无主题)'}
+              </h3>
+              <button onClick={() => setSelectedEmail(null)} className="hover:bg-slate-700 p-1 rounded transition-colors text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 bg-white custom-scrollbar">
+              <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+                <div className="space-y-1">
+                  <div className="text-sm">
+                    <span className="font-semibold text-slate-700 w-12 inline-block">发件人:</span> 
+                    <span className="text-slate-900">{selectedEmail.from_address}</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="font-semibold text-slate-700 w-12 inline-block">收件人:</span> 
+                    <span className="text-slate-900">{selectedEmail.to_address}</span>
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500 text-right">
+                  <div>{new Date(selectedEmail.sent_at || selectedEmail.created_at).toLocaleString()}</div>
+                  <div className="mt-1">
+                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${selectedEmail.direction === 'inbound' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {selectedEmail.direction === 'inbound' ? '收件' : '发件'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                {selectedEmail.body_text || '(无正文)'}
+              </div>
             </div>
           </div>
         </div>
